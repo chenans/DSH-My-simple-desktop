@@ -8,3 +8,14 @@ build/rcedit/
 pkg-smoke*.txt
 e-out.txt
 e-err.txt
+
+# Temp / probe files
+.tmp-*.js
+analyze-session.mjs
+dump-turns.mjs
+inspect-session.mjs
+toc-session.mjs
+icon-smoke-out.txt
+mica-fix2-out.txt
+whale-smoke-out.txt
+nsis-test.7z

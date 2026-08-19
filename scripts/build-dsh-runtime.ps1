@@ -15,14 +15,11 @@
       - Node.js >= 18 (the same major used by the Electron version below)
       - @deepseek-ai/dsh installed globally:  npm i -g @deepseek-ai/dsh
       - npm.cmd on PATH (or the npm used to install dsh globally)
-
-    The script resolves the global dsh installation automatically through npm.
 #>
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-# Resolve project root: the directory containing package.json (the Electron app)
 $ScriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $ProjectRoot = Split-Path -Parent $ScriptDir
 $DshDir = Join-Path $ProjectRoot 'dsh'
@@ -36,7 +33,6 @@ Write-Host "Target dir:   $DshDir"
 # ---------------------------------------------------------------------------
 Write-Host "`n[1/4] Resolving global dsh installation..."
 
-# npm root -g gives us the global node_modules path
 $GlobalRoot = & npm.cmd root -g 2>$null
 if ($LASTEXITCODE -ne 0 -or -not $GlobalRoot) {
     throw "Cannot determine npm global root; is npm installed?"
@@ -60,13 +56,11 @@ Write-Host "  Found: $GlobalDsh"
 # ---------------------------------------------------------------------------
 Write-Host "[2/4] Resolving Node.js binary..."
 
-# Use the Node.js that is on PATH (same major the user runs)
 $NodeExe = (Get-Command node).Source
 if (-not $NodeExe -or -not (Test-Path $NodeExe)) {
     throw "Cannot find node.exe on PATH"
 }
 
-# Verify version
 $NodeVer = & $NodeExe --version
 Write-Host "  Using: $NodeExe ($NodeVer)"
 
@@ -108,7 +102,6 @@ Get-ChildItem $GlobalDsh | Where-Object { $_.Name -ne 'node_modules' } | ForEach
 }
 
 # Copy all @deepseek-ai/* dependency packages from the global dsh's node_modules
-# These include the profile bundles (dsh-base, dsh-web-app, etc.)
 Write-Host "  Copying @deepseek-ai dependency packages..."
 $GlobalDshScope = Join-Path $GlobalDshNm '@deepseek-ai'
 if (Test-Path $GlobalDshScope) {
@@ -121,7 +114,6 @@ if (Test-Path $GlobalDshScope) {
 }
 
 # Copy ALL other dependencies from global dsh's node_modules
-# (excluding @deepseek-ai since we handled it separately)
 Write-Host "  Copying third-party dependencies..."
 $count = 0
 Get-ChildItem $GlobalDshNm -Directory | Where-Object { $_.Name -ne '@deepseek-ai' } | ForEach-Object {
@@ -144,7 +136,7 @@ Get-ChildItem $GlobalDshNm -File | ForEach-Object {
 }
 
 # ---------------------------------------------------------------------------
-# 4. Verify the resulting bundle
+# 4. Verify the resulting bundle — smoke test with actual dsh load
 # ---------------------------------------------------------------------------
 Write-Host "[4/4] Verifying result..."
 
@@ -175,6 +167,26 @@ if ($missing.Count -gt 0) {
     $missing | ForEach-Object { Write-Warning "  $_" }
     Write-Warning "The bundle may not work correctly."
     return
+}
+
+# Smoke test: try to load dsh with bundled node.exe
+Write-Host "  Running smoke test..."
+$testScript = Join-Path $DshDir '_smoke_test.mjs'
+@"
+import('@deepseek-ai/dsh/lib/bin.js').then(
+  () => { console.log('SMOKE_OK'); process.exit(0); },
+  (e) => { console.log('SMOKE_FAIL: ' + e.message); process.exit(1); }
+);
+"@ | Set-Content $testScript -Encoding UTF8
+
+$smokeResult = & (Join-Path $DshDir 'node.exe') $testScript 2>&1
+Remove-Item $testScript -Force -ErrorAction SilentlyContinue
+
+if ($smokeResult -match 'SMOKE_OK') {
+    Write-Host "  Smoke test: PASSED"
+} else {
+    Write-Warning "  Smoke test: FAILED"
+    Write-Warning "  Output: $smokeResult"
 }
 
 Write-Host ""
