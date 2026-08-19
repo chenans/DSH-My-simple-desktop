@@ -1,13 +1,29 @@
 # DSH My Simple Desktop
 
+[![GitHub Release](https://img.shields.io/github/v/release/chenans/DSH-My-simple-desktop)](https://github.com/chenans/DSH-My-simple-desktop/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/chenans/DSH-My-simple-desktop/total)](https://github.com/chenans/DSH-My-simple-desktop/releases/latest)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 一个简单的 Windows 桌面壳：用 Electron 把 DeepSeek Harness 的 `dsh web` 界面封装成桌面应用，**内置 dsh 运行时 + 自动检查更新 + 模型配置教程**。
 
 > 适合团队内部使用，让没有 Node.js 环境或网络不好的同事也能直接双击运行 dsh。
 
+## 📥 直接下载
+
+前往 **[GitHub Releases](https://github.com/chenans/DSH-My-simple-desktop/releases/latest)** 下载，按你的环境选择：
+
+| 版本 | 下载 | 大小 | 适用人群 |
+|------|------|------|---------|
+| **完整版** | [DSH.My.Simple.Desktop-0.1.7-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.7/DSH.My.Simple.Desktop-0.1.7-Setup.exe) | 161.6 MB | 没装 dsh / 离线环境，**无需任何预装**，开箱即用 |
+| **精简版** | [DSH.My.Simple.Desktop-0.1.7-Lite-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.7/DSH.My.Simple.Desktop-0.1.7-Lite-Setup.exe) | 81.5 MB | 本地已装 dsh 的用户，安装快 |
+
+- **完整版**：内置完整 dsh 运行时（node.exe + 全部依赖），首次启动自动安装环境到 `%USERPROFILE%\.dsh-desktop` 并加入命令行 PATH；每次启动自动检查 dsh 更新
+- **精简版**：使用系统已安装的 dsh；若系统没有 dsh 会提示安装 dsh 或改用完整版
+
 ## 功能
 
 - **内置 dsh 运行时** — 安装包自带 node.exe + dsh 依赖树，用户不需要提前安装 Node.js 或 dsh CLI
-- **启动引导** — 启动时弹出进度窗口，显示检测环境 → 启动引擎 → 就绪，避免以为卡死
+- **启动引导** — 启动时弹出进度窗口，显示检测环境 → 安装环境 → 启动引擎 → 就绪，避免以为卡死
 - **智能 dsh 选择** — 系统有安装 dsh 就用系统的（优先最新版），没有就用内置的；系统 dsh 启动失败自动回退内置
 - **自动更新 dsh** — 每次启动后台检查 npm 上有无新版 @deepseek-ai/dsh，有则下载更新（不阻塞启动，失败跳过）
 - **崩溃恢复** — dsh 子进程崩溃自动重启（退避重试），渲染进程崩溃自动重载
