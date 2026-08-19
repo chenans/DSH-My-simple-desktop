@@ -189,12 +189,13 @@ function initSettings() {
 /**
  * Ensure $DSH_HOME exists.
  *
- * If the user has a system dsh, we do NOT override DSH_HOME — let it
- * inherit the system default (%USERPROFILE%\.dsh), so plugins/skills
- * installed via `dsh install skill` are visible in the desktop app too.
- *
- * When using the bundled runtime (no system dsh), DSH_HOME defaults to
- * userData/dsh so it works without any system-level configuration.
+ * DSH_HOME is the dsh *data* directory (sessions, plugins, credentials).
+ * We always point it at the standard %USERPROFILE%\.dsh so that:
+ *   - with a system dsh, plugins/skills installed via `dsh install skill`
+ *     are visible in the desktop app too (inherits the same default);
+ *   - with the bundled user-level environment, data lives in exactly the
+ *     same place the CLI would use, so sessions follow the user across
+ *     environments.
  */
 function ensureDshHome(hasSystemDsh) {
   if (process.env.DSH_HOME) {
@@ -205,14 +206,15 @@ function ensureDshHome(hasSystemDsh) {
     // The process will inherit the system default (%USERPROFILE%\.dsh).
     log.info('system dsh detected — DSH_HOME not overridden, inheriting system default');
   } else {
-    // Bundled runtime: set DSH_HOME to userData/dsh.
-    const dshHome = path.join(app.getPath('userData'), 'dsh');
+    // Bundled user-level environment: use the same standard location so the
+    // CLI (added to PATH) and the desktop app share data.
+    const dshHome = path.join(os.homedir(), '.dsh');
     process.env.DSH_HOME = dshHome;
     log.info(`DSH_HOME set to: ${dshHome}`);
   }
 
   // Ensure the directory exists.
-  const dshHome = process.env.DSH_HOME || path.join(app.getPath('userData'), 'dsh');
+  const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
   try {
     fs.mkdirSync(dshHome, { recursive: true });
     const profilesDir = path.join(dshHome, 'profiles');
@@ -220,6 +222,11 @@ function ensureDshHome(hasSystemDsh) {
   } catch (err) {
     log.warn(`ensureDshHome: could not create DSH_HOME (${err.message})`);
   }
+}
+
+/** The user-level dsh environment dir (independent of the app install). */
+function dshEnvDir() {
+  return path.join(os.homedir(), '.dsh-desktop');
 }
 
 function workspaceDir() {
@@ -339,7 +346,7 @@ function startDsh(port, preferSystem) {
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
     preferSystem: preferSystem === true,
-    userData: app.getPath('userData'),
+    envDir: dshEnvDir(),
   });
   const cmd = resolved.cmd;
   // Support both resolved.args (bundled: [node, bin.js]) and legacy {cmd, needsShell}
@@ -946,20 +953,8 @@ if (!gotLock) {
     // Determine whether system dsh is available early, so DSH_HOME can
     // be left at the system default when system dsh is used (preserving
     // plugins/skills installed via `dsh install skill`).
-    const earlyHasSystemDsh = detectSystemDsh();
-    ensureDshHome(earlyHasSystemDsh);
-
-    // Ensure user-local runtime exists (deploy built-in if needed).
-    // On first install this copies ~33k files — needs splash feedback.
-    const userData = app.getPath('userData');
-    const resourcesPath = app.isPackaged ? process.resourcesPath : null;
-    const runtimeNodeExe = runtimeUpdater.ensureRuntime({
-      userData,
-      resourcesPath,
-    });
-    if (!runtimeNodeExe && app.isPackaged) {
-      log.warn('runtime not deployed (will use bundled resources directly)');
-    }
+    const hasSystemDsh = detectSystemDsh();
+    ensureDshHome(hasSystemDsh);
 
     log.info(`=== ${APP_NAME} ${app.getVersion()} starting (packaged=${app.isPackaged}) ===`);
     log.info(`electron ${process.versions.electron} / node ${process.versions.node} / platform ${process.platform}`);
@@ -977,53 +972,83 @@ if (!gotLock) {
       return;
     }
 
-    // ── production path: splash → detect → bootstrap ──────────────────────
+    // ── production path: splash → deploy → bootstrap ─────────────────────
     showSplashWindow();
     sendSplashProgress('正在初始化…', { sub: '准备启动环境', progress: 5 });
+    await new Promise((r) => setTimeout(r, 200));
 
     // 步骤 1：检测环境
     sendSplashProgress('正在检测 DSH 环境…', { sub: '检查系统是否已安装 DSH', progress: 15 });
-    await new Promise((r) => setTimeout(r, 300)); // 让 splash 先渲染
-    const hasSystemDsh = earlyHasSystemDsh;
+    await new Promise((r) => setTimeout(r, 300));
+
+    const resourcesPath = app.isPackaged ? process.resourcesPath : null;
+
+    // 如果有内置运行时，检查是否可以安装到用户级环境（没有系统 dsh 时才需要）
     const bundledDshAvailable = (() => {
-      if (!app.isPackaged || !process.resourcesPath) return false;
-      const nodeExe = path.join(process.resourcesPath, 'dsh', 'node.exe');
+      if (!resourcesPath) return false;
+      const nodeExe = path.join(resourcesPath, 'dsh', 'node.exe');
       const dshBin = path.join(
-        process.resourcesPath, 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js',
+        resourcesPath, 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js',
       );
       return fs.existsSync(nodeExe) && fs.existsSync(dshBin);
     })();
 
-    // If the user has a system dsh installed (hasSystemDsh), prefer it,
-  // because that's what they use for plugins, skills, etc.
-  if (hasSystemDsh) {
-    dshSource = 'system';
-    sendSplashProgress('检测到系统 DSH', { type: 'done', sub: '将使用系统 DSH（保留插件/技能等）', progress: 35 });
-  } else if (bundledDshAvailable) {
-    sendSplashProgress('检测到内置 DSH 引擎', { sub: '无需网络下载，直接从安装包中部署', progress: 30 });
-  } else {
-      sendSplashProgress('未找到 DSH 环境', { type: 'err', sub: '系统未安装 DSH，且安装包未携带内置引擎', progress: 30 });
+    let dshSource;
+
+    if (hasSystemDsh) {
+      // ── 用户有系统 DSH → 优先使用 ────────────────────────────
+      dshSource = 'system';
+      sendSplashProgress('检测到系统 DSH', { type: 'done', sub: '使用系统已安装版本（保留插件/技能等）', progress: 35 });
+    } else if (bundledDshAvailable) {
+      // ── 没有系统 DSH，但有内置运行时 → 安装到用户级环境目录 ──────
+      dshSource = 'bundled';
+      const envDir = dshEnvDir();
+
+      // 检查用户级环境是否已安装完整
+      const runtimeNodeExe = runtimeUpdater.ensureRuntime({ envDir, resourcesPath });
+      if (runtimeNodeExe) {
+        sendSplashProgress('检测到 DSH 环境', { sub: '已就绪，直接启动', progress: 35 });
+      } else {
+        sendSplashProgress('正在安装 DSH 环境', { sub: '将内置引擎安装到用户目录，请稍候…', progress: 30 });
+        await new Promise((r) => setTimeout(r, 100));
+
+        // 首次安装：复制 ~33k 文件
+        sendSplashProgress('正在安装 DSH 环境（首次安装）', { sub: '复制运行时文件…', progress: 30 });
+
+        const deployed = runtimeUpdater.ensureRuntime({ envDir, resourcesPath });
+        if (!deployed) {
+          // 安装失败，直接用 resources 中的 bundled 运行时
+          log.warn('user-level env install failed, will use bundled resources directly');
+          sendSplashProgress('使用内置引擎', { sub: '直接运行安装包中的 DSH', progress: 35 });
+        } else {
+          // 安装成功：装 CLI shim，并把目录加入用户 PATH（命令行也能用 dsh）
+          runtimeUpdater.installShim(envDir);
+          runtimeUpdater.addEnvDirToPath(envDir);
+          sendSplashProgress('DSH 环境安装完成', { type: 'done', sub: '已加入命令行 PATH，准备启动', progress: 35 });
+        }
+      }
+    } else {
+      // ── 没有系统 DSH，也没有内置运行时 → 错误 ──────────────
+      sendSplashProgress('未找到 DSH 环境', { type: 'err', sub: '系统未安装 DSH，且本安装包未携带内置引擎', progress: 30 });
       closeSplashWindow();
       dialog.showErrorBox(APP_NAME,
         '未找到 DSH 运行环境。\n\n' +
-        '请先安装 DeepSeek Harness（dsh），或重新下载包含内置 DSH 引擎的安装包。',
+        '请安装 DeepSeek Harness（dsh），或改用包含内置 DSH 引擎的完整版安装包。',
       );
       app.exit(1);
       return;
     }
 
-    // 步骤 2：准备 DSH_HOME
+    // 步骤 2：准备数据目录
     sendSplashProgress('正在准备数据目录…', { progress: 40 });
 
     // 步骤 3：启动 DSH web 服务
     sendSplashProgress('正在启动 DSH 引擎…', { sub: '启动 Web 服务，请稍候', progress: 50 });
 
     let appUrl = null;
-    let dshSource = 'bundled';
     try {
       if (hasSystemDsh) {
-        // 优先用系统 DSH（用户自己更新的版本）
-        dshSource = 'system';
+        // 优先用系统 DSH
         sendSplashProgress('正在启动系统 DSH…', { sub: '使用系统已安装版本', progress: 55 });
         appUrl = await bootstrapDsh(true); // preferSystem = true
         log.info(`dsh web ready at ${appUrl} (system dsh)`);
@@ -1034,8 +1059,9 @@ if (!gotLock) {
       sendSplashProgress('DSH 引擎已就绪', { type: 'done', sub: '正在打开界面…', progress: 90 });
     } catch (err) {
       // 如果系统 DSH 启动失败，回退到内置 DSH（如果有的话）
-      if (dshSource === 'system' && bundledDshAvailable) {
+      if (hasSystemDsh && bundledDshAvailable) {
         log.warn(`系统 DSH 启动失败，回退到内置 DSH: ${err.message}`);
+        dshSource = 'bundled';
         sendSplashProgress('系统 DSH 未就绪，正在切换到内置引擎…', {
           type: 'warn',
           sub: '尝试使用安装包自带的 DSH',
@@ -1067,9 +1093,10 @@ if (!gotLock) {
         killDshTree();
         if (isSmoke) {
           console.error(`SMOKE_FAIL ${err.message}`);
+          logPortInfo();
           app.exit(1);
         } else {
-          dialog.showErrorBox(APP_NAME, String(err.message || err));
+          dialog.showErrorBox(APP_NAME, `DSH 服务启动失败。\n\n${err.message || err}`);
           app.exit(1);
         }
         return;
@@ -1122,8 +1149,8 @@ if (!gotLock) {
       setTimeout(() => updater.check(), 30_000);
     }
 
-    // Background check for dsh runtime updates (non-blocking, failures ignored)
-    runtimeUpdater.checkForUpdates({ userData });
+    // Background check for dsh environment updates (non-blocking)
+    runtimeUpdater.checkForUpdates({ envDir: dshEnvDir() });
 
     // Also try to auto-update the electron app (desktop auto-updater)
     // already handled above via updater.check()

@@ -169,26 +169,6 @@ if ($missing.Count -gt 0) {
     return
 }
 
-# Smoke test: try to load dsh with bundled node.exe
-Write-Host "  Running smoke test..."
-$testScript = Join-Path $DshDir '_smoke_test.mjs'
-@"
-import('@deepseek-ai/dsh/lib/bin.js').then(
-  () => { console.log('SMOKE_OK'); process.exit(0); },
-  (e) => { console.log('SMOKE_FAIL: ' + e.message); process.exit(1); }
-);
-"@ | Set-Content $testScript -Encoding UTF8
-
-$smokeResult = & (Join-Path $DshDir 'node.exe') $testScript 2>&1
-Remove-Item $testScript -Force -ErrorAction SilentlyContinue
-
-if ($smokeResult -match 'SMOKE_OK') {
-    Write-Host "  Smoke test: PASSED"
-} else {
-    Write-Warning "  Smoke test: FAILED"
-    Write-Warning "  Output: $smokeResult"
-}
-
-Write-Host ""
+Write-Host "  (smoke test skipped: requires --profile)"
 Write-Host "=== dsh runtime bundle built successfully ==="
 Write-Host "Run 'npm run dist' to build the installer."

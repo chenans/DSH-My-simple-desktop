@@ -70,12 +70,19 @@ npm install -g @deepseek-ai/dsh
 
 ```bat
 npm.cmd run build:runtime   # 构建内嵌 dsh 运行时（dsh/ 目录，~340MB）
-npm.cmd run dist            # 打包 NSIS 安装包
+npm.cmd run dist            # 打包完整版 NSIS 安装包
+npm.cmd run dist:lite       # 打包精简版 NSIS 安装包（不含内置 dsh）
 ```
 
-产物在 `release/` 目录：`DSH My Simple Desktop-0.1.x-Setup.exe`。
+产物在 `release/` 目录：
 
-> 打包后的安装包**不依赖系统 Node.js 或 dsh CLI**——它内嵌了便携版 Node.js + 完整 dsh 依赖树。
+| 产物 | 大小 | 说明 |
+|------|------|------|
+| `DSH My Simple Desktop-0.1.x-Setup.exe` | ~162 MB | **完整版**：内嵌 dsh 运行时，无 dsh 环境可直接用（离线环境/同事机器） |
+| `DSH My Simple Desktop-0.1.x-Lite-Setup.exe` | ~82 MB | **精简版**：仅应用本体，本地已装 dsh 的用户安装快；启动时优先用系统 dsh，没有则提示装 dsh 或用完整版 |
+
+> 完整版**不依赖系统 Node.js 或 dsh CLI**——它内嵌了便携版 Node.js + 完整 dsh 依赖树。
+> 两个版本的**运行时选择逻辑相同**：每次启动先检测系统 dsh，有则用本地的；本地没有才用内置（完整版）。
 
 ## 环境变量
 

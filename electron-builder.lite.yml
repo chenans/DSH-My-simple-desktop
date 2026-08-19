@@ -1,0 +1,48 @@
+# electron-builder configuration — Win11 (NSIS installer) — LITE edition
+#
+# The Lite edition ships WITHOUT the bundled dsh runtime (resources/dsh).
+# It is meant for users who already have dsh installed on their machine:
+#   - installation is fast (~5 MB instead of ~162 MB)
+#   - the app detects the system dsh at startup and uses it
+#   - if no dsh is found, the app shows a clear error pointing to the
+#     full edition (or asks the user to install dsh)
+#
+# Build with:  npm run dist:lite
+
+appId: com.dsh-my-simple-desktop.app
+productName: DSH My Simple Desktop
+copyright: Copyright © 2025
+
+# afterPack hook embeds the app icon + version metadata into the exe via rcedit
+afterPack: scripts/afterPack.js
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - src/**/*
+  - package.json
+  - assets/**/*
+
+# NOTE: no extraResources — this edition intentionally has no bundled dsh.
+
+win:
+  icon: assets/icon.png
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: "${productName}-${version}-Lite-Setup.${ext}"
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: DSH My Simple Desktop
+  runAfterFinish: true
+  installerIcon: assets/icon.ico
+  uninstallerIcon: assets/icon.ico
