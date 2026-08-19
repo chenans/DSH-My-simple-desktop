@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'" />
+<title>设置 — DSH My Simple Desktop</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1f2328; --muted: #656d76;
+    --card: #f6f8fa; --border: #d0d7de; --accent: #4d6bfe;
+    --ok: #1a7f37; --warn: #9a6700; --err: #cf222e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1f1f1f; --fg: #e6e6e6; --muted: #9d9d9d;
+      --card: #2b2b2b; --border: #3f3f3f; --accent: #6b85ff;
+      --ok: #3fb950; --warn: #d29922; --err: #f85149;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif;
+    padding: 20px 24px 28px;
+  }
+  h1 { font-size: 16px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 12px; margin: 0 0 18px; }
+  .row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 12px 14px; margin-bottom: 10px;
+    background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  }
+  .row .label { flex: 1; min-width: 0; }
+  .row .label .name { font-weight: 600; }
+  .row .label .desc { color: var(--muted); font-size: 12px; }
+  .path {
+    font-family: Consolas, monospace; font-size: 12px; color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  button {
+    font: inherit; padding: 6px 14px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--card); color: var(--fg);
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--err); border-color: var(--err); }
+  input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); cursor: pointer; }
+  #updateStatus { font-size: 12px; color: var(--muted); margin-top: 4px; min-height: 18px; }
+  #updateStatus.ok { color: var(--ok); } #updateStatus.err { color: var(--err); }
+  #updateStatus.warn { color: var(--warn); }
+  .buttons { display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+  <h1>设置</h1>
+  <p class="sub" id="appMeta"></p>
+
+  <div class="row">
+    <div class="label">
+      <div class="name">工作区目录</div>
+      <div class="desc">dsh 进程的工作目录（修改后重启应用生效）</div>
+      <div class="path" id="workspace">…</div>
+    </div>
+    <div class="buttons">
+      <button id="chooseWorkspace">更改…</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="label">
+      <div class="name">关闭窗口时最小化到托盘</div>
+      <div class="desc">应用驻留系统托盘，从托盘菜单退出</div>
+    </div>
+    <input type="checkbox" id="closeToTray" />
+  </div>
+
+  <div class="row">
+    <div class="label">
+      <div class="name">开机自启</div>
+      <div class="desc">登录 Windows 后自动启动（后台运行）</div>
+    </div>
+    <input type="checkbox" id="autoLaunch" />
+  </div>
+
+  <div class="row">
+    <div class="label">
+      <div class="name">启动时检查更新</div>
+      <div class="desc">启动后静默检查新版本</div>
+    </div>
+    <input type="checkbox" id="checkUpdatesOnStart" />
+  </div>
+
+  <div class="row">
+    <div class="label">
+      <div class="name">软件更新</div>
+      <div class="desc" id="updateStatus">未检查</div>
+    </div>
+    <div class="buttons">
+      <button class="primary" id="checkUpdate">立即检查</button>
+      <button id="installUpdate" style="display:none">安装并重启</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="label">
+      <div class="name">日志与诊断</div>
+      <div class="desc">查看运行日志文件目录</div>
+    </div>
+    <div class="buttons">
+      <button id="openLogs">打开日志目录</button>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="label">
+      <div class="name">退出应用</div>
+      <div class="desc">关闭 dsh 服务并完全退出</div>
+    </div>
+    <button class="danger" id="quitApp">退出</button>
+  </div>
+
+  <div class="row" style="border-color: var(--accent);">
+    <div class="label">
+      <div class="name">📖 模型配置教程</div>
+      <div class="desc">以 New API / One API 兼容网关为例，一步步配置第三方模型</div>
+    </div>
+    <button id="openGuide" class="primary">查看教程</button>
+  </div>
+
+<script>
+'use strict';
+const api = window.dshDesktop;
+const $ = (id) => document.getElementById(id);
+let downloaded = false;
+
+function setStatus(text, cls) {
+  const el = $('updateStatus');
+  el.textContent = text;
+  el.className = cls || '';
+}
+
+function applyTheme(dark) {
+  document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+}
+
+(async function init() {
+  const [s, info] = await Promise.all([api.settings.getAll(), api.app.info()]);
+  document.title = '设置 — ' + (info && info.name);
+  $('appMeta').textContent =
+    (info ? `${info.name} v${info.version}` : '') +
+    (info && info.updateUrl ? ` · 更新源: ${info.updateUrl}` : ' · 未配置更新源');
+
+  $('workspace').textContent = s.workspace || '（默认：用户主目录）';
+  $('closeToTray').checked = !!s.closeToTray;
+  $('autoLaunch').checked = !!s.autoLaunch;
+  $('checkUpdatesOnStart').checked = s.checkUpdatesOnStart !== false;
+
+  $('closeToTray').addEventListener('change', (e) =>
+    api.settings.set('closeToTray', e.target.checked));
+  $('autoLaunch').addEventListener('change', (e) =>
+    api.settings.set('autoLaunch', e.target.checked));
+  $('checkUpdatesOnStart').addEventListener('change', (e) =>
+    api.settings.set('checkUpdatesOnStart', e.target.checked));
+
+  $('chooseWorkspace').addEventListener('click', async () => {
+    const ws = await api.settings.chooseWorkspace();
+    $('workspace').textContent = ws || '（默认：用户主目录）';
+  });
+  $('openLogs').addEventListener('click', () => api.settings.openLogDir());
+  $('quitApp').addEventListener('click', () => api.app.quit());
+  $('openGuide').addEventListener('click', () => api.app.openGuide());
+
+  $('checkUpdate').addEventListener('click', () => {
+    setStatus('正在检查…');
+    api.updater.check();
+  });
+  $('installUpdate').addEventListener('click', () => api.app.quit());
+
+  api.updater.onEvent((ev) => {
+    switch (ev.type) {
+      case 'checking-for-update': setStatus('正在检查…'); break;
+      case 'update-available':
+        setStatus('发现新版本，正在下载…'); break;
+      case 'update-not-available':
+        setStatus('已是最新版本'); $('updateStatus').className = 'ok'; break;
+      case 'download-progress':
+        if (ev.payload && ev.payload.percent != null) {
+          setStatus(`下载中 ${ev.payload.percent.toFixed(0)}%`);
+        }
+        break;
+      case 'update-downloaded':
+        setStatus('新版本已下载，点击「安装并重启」');
+        $('updateStatus').className = 'ok';
+        downloaded = true;
+        $('installUpdate').style.display = '';
+        break;
+      case 'error':
+        setStatus('更新失败：' + (ev.payload && ev.payload.message || '未知错误'));
+        $('updateStatus').className = 'err';
+        break;
+      default: break;
+    }
+  });
+
+  api.theme.onChanged((t) => applyTheme(t.dark));
+  applyTheme(window.matchMedia('(prefers-color-scheme: dark)').matches);
+})();
+</script>
+</body>
+</html>

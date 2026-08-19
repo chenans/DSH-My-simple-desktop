@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'" />
+<title>正在启动 — DSH My Simple Desktop</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #ffffff; --fg: #1f2328; --muted: #656d76;
+    --accent: #4d6bfe; --accent-dim: #b3c0ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1f1f1f; --fg: #e6e6e6; --muted: #9d9d9d;
+      --accent: #6b85ff; --accent-dim: #3d4b8c;
+    }
+  }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; height: 100vh; padding: 24px;
+    user-select: none; -webkit-app-region: drag;
+  }
+  h1 {
+    font-size: 20px; font-weight: 600; margin-bottom: 16px;
+  }
+  .spinner {
+    width: 40px; height: 40px; border: 4px solid var(--accent-dim);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: spin 0.9s linear infinite; margin-bottom: 20px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #status {
+    font-size: 14px; color: var(--muted); text-align: center;
+    min-height: 22px; transition: color 0.2s;
+  }
+  #status.done { color: #3fb950; }
+  #status.err  { color: #f85149; }
+  .sub {
+    font-size: 12px; color: var(--muted); margin-top: 8px;
+    text-align: center; min-height: 18px;
+  }
+  .progress-bar {
+    width: 280px; height: 4px; background: var(--accent-dim);
+    border-radius: 2px; margin-top: 24px; overflow: hidden;
+    opacity: 0; transition: opacity 0.3s;
+  }
+  .progress-bar.active { opacity: 1; }
+  .progress-bar .fill {
+    height: 100%; width: 0%; background: var(--accent);
+    border-radius: 2px; transition: width 0.5s ease;
+  }
+</style>
+</head>
+<body>
+  <div class="spinner"></div>
+  <h1>DSH My Simple Desktop</h1>
+  <div id="status">正在初始化…</div>
+  <div class="sub" id="substatus"></div>
+  <div class="progress-bar" id="progressBar"><div class="fill" id="progressFill"></div></div>
+  <script>
+    'use strict';
+    const $ = (id) => document.getElementById(id);
+    const statusEl = $('status');
+    const subEl = $('substatus');
+    const bar = $('progressBar');
+    const fill = $('progressFill');
+
+    window.electronAPI.onSplashProgress((_event, data) => {
+      if (data.status) {
+        statusEl.textContent = data.status;
+        statusEl.className = data.type === 'done' ? 'done' : data.type === 'err' ? 'err' : '';
+      }
+      if (data.sub) subEl.textContent = data.sub;
+      if (data.progress != null) {
+        bar.classList.add('active');
+        fill.style.width = Math.min(100, Math.max(0, data.progress)) + '%';
+      }
+      if (data.type === 'done' || data.type === 'err') {
+        document.querySelector('.spinner').style.display = 'none';
+      }
+    });
+  </script>
+</body>
+</html>

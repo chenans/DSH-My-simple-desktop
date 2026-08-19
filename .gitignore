@@ -1,0 +1,10 @@
+node_modules/
+release/
+dist/
+dsh/
+.smoke-shots/
+build/rcedit/
+*.log
+pkg-smoke*.txt
+e-out.txt
+e-err.txt

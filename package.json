@@ -1,0 +1,34 @@
+{
+  "name": "dsh-my-simple-desktop",
+  "version": "0.1.7",
+  "description": "A simple desktop wrapper for DeepSeek Harness (dsh web) — built with Electron",
+  "author": "dsh-my-simple-desktop contributors",
+  "main": "src/main.js",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "smoke": "electron . --smoke",
+    "smoke:dev": "electron . --smoke --dev",
+    "test": "node --test --test-force-exit \"test/*.test.js\"",
+    "build:runtime": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-dsh-runtime.ps1",
+    "predist": "node -e \"if(!require('fs').existsSync('dsh/node.exe')){console.error('ERROR: dsh/ directory missing. Run npm run build:runtime first.');process.exit(1)}\"",
+    "dist": "electron-builder --win nsis",
+    "dist:dir": "electron-builder --win dir",
+    "release:patch": "node scripts/bump-version.js patch",
+    "release:minor": "node scripts/bump-version.js minor",
+    "release:major": "node scripts/bump-version.js major"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "electron-log": "^5.4.4",
+    "electron-updater": "^6.8.9"
+  }
+}

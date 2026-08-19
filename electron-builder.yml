@@ -1,0 +1,53 @@
+# electron-builder configuration — Win11 (NSIS installer)
+
+appId: com.dsh-my-simple-desktop.app
+productName: DSH My Simple Desktop
+copyright: Copyright © 2025
+
+# afterPack hook embeds the app icon + version metadata into the exe via rcedit
+# (works without admin/Developer Mode; see scripts/afterPack.js).
+afterPack: scripts/afterPack.js
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - src/**/*
+  - package.json
+  - assets/**/*
+
+# Where a bundled dsh runtime is expected in the packaged app:
+#   resources/dsh/dsh.exe  (see src/main.js resolveDshCommand)
+extraResources:
+  - from: dsh
+    to: dsh
+    filter:
+      - "**/*"
+    # NOTE: the `dsh` folder does not exist yet in this skeleton; electron-builder
+    # skips missing sources. Drop a single-file dsh.exe there before `npm run dist`
+    # to ship without requiring Node.js on the user's machine.
+
+win:
+  icon: assets/icon.png
+  # signAndEditExecutable stays off: the winCodeSign toolchain needs admin /
+  # Developer Mode locally. The afterPack hook (rcedit) covers icon + version
+  # metadata the same way, without privileges. Signing is handled separately
+  # via CSC_LINK when a certificate is available.
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: "${productName}-${version}-Setup.${ext}"
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: DSH My Simple Desktop
+  runAfterFinish: true
+  installerIcon: assets/icon.ico
+  uninstallerIcon: assets/icon.ico

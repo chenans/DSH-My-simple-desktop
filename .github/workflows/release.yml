@@ -1,0 +1,72 @@
+# GitHub Actions — build & publish the Windows installer on tag push.
+#
+# Trigger:    git tag v0.1.0 && git push origin v0.1.0
+# Artifacts:  DeepSeek Harness Desktop-<ver>-Setup.exe (+ .blockmap, latest.yml)
+#             uploaded to the GitHub Release for the tag.
+#
+# Note: CI runners have admin rights, so exe metadata editing (icon/version)
+# is enabled here even though the local config keeps it off.
+
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install Electron binary (mirror-safe)
+        shell: pwsh
+        run: |
+          $env:ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/"
+          node node_modules/electron/install.js
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Package NSIS installer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win nsis --publish onTagOrDraft
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-desktop-win-x64
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+          if-no-files-found: error
+
+      - name: Smoke test the packaged app
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "release\win-unpacked\*.exe" | Select-Object -First 1
+          $out = "smoke-out.txt"; $err = "smoke-err.txt"
+          $p = Start-Process -FilePath $exe.FullName -ArgumentList "--smoke" `
+            -PassThru -Wait -RedirectStandardOutput $out -RedirectStandardError $err
+          Get-Content $out
+          if ($p.ExitCode -ne 0) { exit 1 }
+          if (-not (Select-String -Path $out -Pattern "SMOKE_OK" -Quiet)) {
+            Write-Error "SMOKE_OK not found in output"; exit 1
+          }
