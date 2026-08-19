@@ -149,7 +149,7 @@ function fetchLatestVersion() {
 
 /**
  * Deploy the built-in dsh runtime (from resources) to the user data directory.
- * This is a copy operation using Node.js streams (no extra tooling needed).
+ * This unconditionally copies the full runtime to ensure consistency.
  * @param {string} userData
  * @param {string} resourcesPath  process.resourcesPath
  * @returns {boolean}  true if deployment succeeded
@@ -159,12 +159,6 @@ function deployBuiltinRuntime(userData, resourcesPath) {
   const dest = deployDir(userData);
   try {
     if (!fs.existsSync(src)) return false;
-    // Only copy if destination doesn't exist yet (avoid unnecessary I/O)
-    if (fs.existsSync(path.join(dest, 'node.exe')) &&
-        fs.existsSync(path.join(dest, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))) {
-      // Already deployed — but we might still need to write a version
-      return true;
-    }
     log.info('[runtime-updater] deploying built-in dsh runtime to user data…');
     copyDirSync(src, dest);
     // Read the version from the bundled package.json

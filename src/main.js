@@ -217,45 +217,55 @@ function workspaceDir() {
 // ---------------------------------------------------------------------------
 
 function killDshTree() {
-  if (!dshChild || dshChild.killed) return;
-  log.info('stopping dsh child (tree)');
-  if (process.platform === 'win32' && dshChild.pid) {
-    try {
-      // Send Ctrl-C / SIGINT to dsh process to allow graceful shutdown
-      // Use start /B to run in background, then taskkill with the process
-      // signal handler (CTRL_BREAK_EVENT = 1, CTRL_C_EVENT = 0).
-      // On Windows, we first send a console signal via a temporary process
-      // that shares the console, then fall back to hard kill.
-      // Since we spawned with windowsHide, we use taskkill /PID gracefully first.
-      spawn('taskkill', ['/pid', String(dshChild.pid)], {
-        stdio: 'ignore',
-        windowsHide: true,
-      });
-      // After a short grace period, force kill the tree if still alive
-      setTimeout(() => {
-        try {
-          if (dshChild && !dshChild.killed) {
-            spawn('taskkill', ['/pid', String(dshChild.pid), '/T', '/F'], {
-              stdio: 'ignore',
-              windowsHide: true,
-            });
-          }
-        } catch {
-          dshChild.kill();
-        }
-      }, 3000);
-    } catch {
-      dshChild.kill();
-    }
-  } else {
-    // POSIX: SIGTERM first, then SIGKILL later
-    dshChild.kill('SIGTERM');
-    setTimeout(() => {
+  if (dshPort) {
+    log.info(`stopping dsh child on port ${dshPort} (tree)`);
+    // Find and kill the process listening on our port — most reliable way
+    // on Windows, since the child may have been detached from dshChild.
+    if (process.platform === 'win32') {
+      const { execSync } = require('node:child_process');
       try {
-        if (dshChild && !dshChild.killed) dshChild.kill('SIGKILL');
-      } catch { /* ignore */ }
-    }, 3000);
+        // netstat -ano finds PID listening on dshPort
+        const netstatOut = execSync(
+          `netstat -ano | findstr "127.0.0.1:${dshPort}"`,
+          { encoding: 'utf-8', timeout: 5000, windowsHide: true },
+        );
+        const lines = netstatOut.split('\n').filter(l => l.includes('LISTENING'));
+        for (const line of lines) {
+          const parts = line.trim().split(/\s+/);
+          const pid = parts[parts.length - 1];
+          if (pid && pid !== '0') {
+            try {
+              execSync(`taskkill /PID ${pid} /T /F`, {
+                stdio: 'ignore', timeout: 3000, windowsHide: true,
+              });
+              log.info(`killed pid ${pid} (port ${dshPort})`);
+            } catch (e) {
+              log.warn(`failed to kill pid ${pid}: ${e.message}`);
+            }
+          }
+        }
+      } catch (e) {
+        log.warn(`netstat lookup failed: ${e.message}`);
+      }
+    }
   }
+
+  // Also try the standard child-process kill as a fallback
+  if (dshChild && !dshChild.killed) {
+    log.info('fallback: killing dshChild directly');
+    try {
+      if (process.platform === 'win32' && dshChild.pid) {
+        spawn('taskkill', ['/pid', String(dshChild.pid), '/T', '/F'], {
+          stdio: 'ignore', windowsHide: true,
+        });
+      } else {
+        dshChild.kill('SIGKILL');
+      }
+    } catch { dshChild.kill(); }
+  }
+
+  dshChild = null;
+  dshPort = null;
 }
 
 /**
@@ -920,12 +930,17 @@ if (!gotLock) {
     initSettings();
     ensureDshHome();
 
-    // Ensure user-local runtime exists (deploy built-in if needed)
+    // Ensure user-local runtime exists (deploy built-in if needed).
+    // On first install this copies ~33k files — needs splash feedback.
     const userData = app.getPath('userData');
-    runtimeUpdater.ensureRuntime({
+    const resourcesPath = app.isPackaged ? process.resourcesPath : null;
+    const runtimeNodeExe = runtimeUpdater.ensureRuntime({
       userData,
-      resourcesPath: app.isPackaged ? process.resourcesPath : null,
+      resourcesPath,
     });
+    if (!runtimeNodeExe && app.isPackaged) {
+      log.warn('runtime not deployed (will use bundled resources directly)');
+    }
 
     log.info(`=== ${APP_NAME} ${app.getVersion()} starting (packaged=${app.isPackaged}) ===`);
     log.info(`electron ${process.versions.electron} / node ${process.versions.node} / platform ${process.platform}`);
