@@ -254,6 +254,12 @@ function releaseLock(userData) {
  * Ensure the user-local runtime exists (deploy built-in if needed).
  * To be called once at startup before spawning dsh.
  *
+ * Every time this runs, we re-deploy from the built-in resources to ensure
+ * the runtime is always consistent with what was shipped in the installer.
+ * (The old background auto-update that only patched the dsh package without
+ *  its dependency tree caused ERR_MODULE_NOT_FOUND crashes — see commit
+ *  2504fb4.)
+ *
  * @param {object} opts
  * @param {string} opts.userData  app.getPath('userData')
  * @param {string} [opts.resourcesPath]  process.resourcesPath (packaged)
@@ -265,15 +271,31 @@ function ensureRuntime(opts) {
   const nodeExe = path.join(dest, 'node.exe');
   const dshBin = path.join(dest, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
 
-  // If already deployed and valid, just return the path
+  // If there's a version marker and commander is present, the runtime is
+  // intact — skip re-deploy to save startup time.
   if (fs.existsSync(nodeExe) && fs.existsSync(dshBin)) {
-    return nodeExe;
+    const hasVersion = fs.existsSync(versionFile(userData));
+    const hasCommander = fs.existsSync(
+      path.join(dest, 'node_modules', 'commander', 'package.json'),
+    );
+    if (hasVersion && hasCommander) {
+      return nodeExe;
+    }
   }
 
-  // Deploy from built-in resources
+  // Deploy from built-in resources (fresh copy).
   if (resourcesPath) {
+    log.info('[runtime-updater] deploying built-in dsh runtime to user data…');
+    // Remove any partial/stale runtime first
+    try { fs.rmSync(dest, { recursive: true, force: true }); } catch {}
     const ok = deployBuiltinRuntime(userData, resourcesPath);
     if (ok && fs.existsSync(nodeExe) && fs.existsSync(dshBin)) {
+      // Write version marker
+      const pkgJson = path.join(dest, 'node_modules', '@deepseek-ai', 'dsh', 'package.json');
+      try {
+        const pkg = JSON.parse(fs.readFileSync(pkgJson, 'utf-8'));
+        if (pkg.version) writeDeployedVersion(userData, pkg.version);
+      } catch {}
       return nodeExe;
     }
   }
@@ -283,63 +305,31 @@ function ensureRuntime(opts) {
 
 /**
  * Check for updates in the background. Never throws. Never blocks.
- * Results are logged; if a newer version is found, it's downloaded and
- * extracted into the user-local runtime directory.
+ * Logs whether a newer version is available — but does NOT auto-update,
+ * because the npm package only ships @deepseek-ai/dsh itself without its
+ * full dependency tree, and a partial replacement causes ERR_MODULE_NOT_FOUND.
  *
  * @param {object} opts
  * @param {string} opts.userData  app.getPath('userData')
- * @param {string} [optse.resourcesPath]  resources path (for fallback version)
  */
 function checkForUpdates(opts) {
   const { userData } = opts;
 
-  // Check interval
   const lastCheck = readLastCheck(userData);
   if (lastCheck > 0 && (Date.now() - lastCheck) < CHECK_INTERVAL_DAYS * 24 * 60 * 60 * 1000) {
-    log.info('[runtime-updater] skipped (last check < 1 day ago)');
     return;
   }
   writeLastCheck(userData);
 
-  // Don't block startup
   setImmediate(async () => {
-    if (!acquireLock(userData)) {
-      log.info('[runtime-updater] skipped (another update in progress)');
-      return;
-    }
-
     try {
-      const currentVer = readDeployedVersion(userData) || '0.0.0';
-      log.info(`[runtime-updater] current version: ${currentVer}`);
-
+      const currentVer = readDeployedVersion(userData) || '(bundled)';
       const latestVer = await fetchLatestVersion();
-      if (!latestVer) {
-        log.info('[runtime-updater] could not fetch latest version (network issue) — skipping');
-        return;
-      }
-
-      log.info(`[runtime-updater] latest version on npm: ${latestVer}`);
-
-      // Compare versions (simple string comparison works for semver)
-      if (latestVer === currentVer) {
-        log.info('[runtime-updater] already at latest version');
-        return;
-      }
-
-      // A newer version is available — download the tgz and extract
-      log.info(`[runtime-updater] newer version ${latestVer} available, downloading…`);
-      const success = await downloadAndExtract(userData, latestVer);
-
-      if (success) {
-        writeDeployedVersion(userData, latestVer);
-        log.info(`[runtime-updater] updated to ${latestVer}`);
-      } else {
-        log.warn('[runtime-updater] update download/extract failed, will retry next launch');
+      if (latestVer) {
+        log.info(`[runtime-updater] current=${currentVer} latest=${latestVer}${latestVer !== currentVer ? ' (update available — manual reinstall required)' : ' (up to date)'}`);
       }
     } catch (err) {
-      log.warn(`[runtime-updater] unexpected error: ${err.message}`);
-    } finally {
-      releaseLock(userData);
+      log.warn(`[runtime-updater] check failed: ${err.message}`);
     }
   });
 }
