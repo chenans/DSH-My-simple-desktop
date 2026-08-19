@@ -187,20 +187,34 @@ function initSettings() {
 }
 
 /**
- * Ensure $DSH_HOME exists with a basic default preamble, so new users
- * get reasonable defaults (auto compaction, web profile consistency).
- * Also sets DSH_HOME env var if not already set, pointing to userData/dsh.
+ * Ensure $DSH_HOME exists.
+ *
+ * If the user has a system dsh, we do NOT override DSH_HOME — let it
+ * inherit the system default (%USERPROFILE%\.dsh), so plugins/skills
+ * installed via `dsh install skill` are visible in the desktop app too.
+ *
+ * When using the bundled runtime (no system dsh), DSH_HOME defaults to
+ * userData/dsh so it works without any system-level configuration.
  */
-function ensureDshHome() {
-  const dshHome = process.env.DSH_HOME || path.join(app.getPath('userData'), 'dsh');
-  if (!process.env.DSH_HOME) {
+function ensureDshHome(hasSystemDsh) {
+  if (process.env.DSH_HOME) {
+    // User explicitly set it — always respect that.
+    log.info(`DSH_HOME already set: ${process.env.DSH_HOME}`);
+  } else if (hasSystemDsh) {
+    // System dsh is available — don't override DSH_HOME.
+    // The process will inherit the system default (%USERPROFILE%\.dsh).
+    log.info('system dsh detected — DSH_HOME not overridden, inheriting system default');
+  } else {
+    // Bundled runtime: set DSH_HOME to userData/dsh.
+    const dshHome = path.join(app.getPath('userData'), 'dsh');
     process.env.DSH_HOME = dshHome;
     log.info(`DSH_HOME set to: ${dshHome}`);
   }
-  // Create DSH_HOME directory if it doesn't exist
+
+  // Ensure the directory exists.
+  const dshHome = process.env.DSH_HOME || path.join(app.getPath('userData'), 'dsh');
   try {
     fs.mkdirSync(dshHome, { recursive: true });
-    // The profiles directory under DSH_HOME
     const profilesDir = path.join(dshHome, 'profiles');
     fs.mkdirSync(profilesDir, { recursive: true });
   } catch (err) {
@@ -928,7 +942,12 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     initSettings();
-    ensureDshHome();
+
+    // Determine whether system dsh is available early, so DSH_HOME can
+    // be left at the system default when system dsh is used (preserving
+    // plugins/skills installed via `dsh install skill`).
+    const earlyHasSystemDsh = detectSystemDsh();
+    ensureDshHome(earlyHasSystemDsh);
 
     // Ensure user-local runtime exists (deploy built-in if needed).
     // On first install this copies ~33k files — needs splash feedback.
@@ -965,7 +984,7 @@ if (!gotLock) {
     // 步骤 1：检测环境
     sendSplashProgress('正在检测 DSH 环境…', { sub: '检查系统是否已安装 DSH', progress: 15 });
     await new Promise((r) => setTimeout(r, 300)); // 让 splash 先渲染
-    const hasSystemDsh = detectSystemDsh();
+    const hasSystemDsh = earlyHasSystemDsh;
     const bundledDshAvailable = (() => {
       if (!app.isPackaged || !process.resourcesPath) return false;
       const nodeExe = path.join(process.resourcesPath, 'dsh', 'node.exe');
@@ -975,11 +994,14 @@ if (!gotLock) {
       return fs.existsSync(nodeExe) && fs.existsSync(dshBin);
     })();
 
-    if (hasSystemDsh) {
-      sendSplashProgress('检测到系统 DSH', { type: 'done', sub: '将优先使用系统已安装的 DSH', progress: 30 });
-    } else if (bundledDshAvailable) {
-      sendSplashProgress('检测到内置 DSH 引擎', { sub: '无需网络下载，直接从安装包中部署', progress: 30 });
-    } else {
+    // If the user has a system dsh installed (hasSystemDsh), prefer it,
+  // because that's what they use for plugins, skills, etc.
+  if (hasSystemDsh) {
+    dshSource = 'system';
+    sendSplashProgress('检测到系统 DSH', { type: 'done', sub: '将使用系统 DSH（保留插件/技能等）', progress: 35 });
+  } else if (bundledDshAvailable) {
+    sendSplashProgress('检测到内置 DSH 引擎', { sub: '无需网络下载，直接从安装包中部署', progress: 30 });
+  } else {
       sendSplashProgress('未找到 DSH 环境', { type: 'err', sub: '系统未安装 DSH，且安装包未携带内置引擎', progress: 30 });
       closeSplashWindow();
       dialog.showErrorBox(APP_NAME,
