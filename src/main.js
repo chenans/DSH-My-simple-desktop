@@ -349,10 +349,16 @@ function startDsh(port, preferSystem) {
     envDir: dshEnvDir(),
   });
   const cmd = resolved.cmd;
+  // --no-open prevents the system dsh CLI from auto-opening a browser.
+  // Only the system dsh (rc7+) supports this flag; the bundled rc6 does not
+  // and will crash with "unknown option" if it receives it. The bundled dsh
+  // never auto-opens a browser anyway, so we only add --no-open when using
+  // the system dsh (preferSystem = true).
+  const noOpenFlag = preferSystem ? ['--no-open'] : [];
   // Support both resolved.args (bundled: [node, bin.js]) and legacy {cmd, needsShell}
   const args = resolved.args
-    ? [...resolved.args, '--profile', 'web', '--port', String(port)]
-    : ['--profile', 'web', '--port', String(port)];
+    ? [...resolved.args, '--profile', 'web', '--port', String(port), ...noOpenFlag]
+    : ['--profile', 'web', '--port', String(port), ...noOpenFlag];
   const needsShell = resolved.needsShell || false;
   const cwd = workspaceDir();
   log.info(`spawning: ${cmd} ${args.join(' ')}  (cwd: ${cwd})`);
@@ -995,39 +1001,7 @@ if (!gotLock) {
 
     let dshSource;
 
-    if (hasSystemDsh) {
-      // ── 用户有系统 DSH → 优先使用 ────────────────────────────
-      dshSource = 'system';
-      sendSplashProgress('检测到系统 DSH', { type: 'done', sub: '使用系统已安装版本（保留插件/技能等）', progress: 35 });
-    } else if (bundledDshAvailable) {
-      // ── 没有系统 DSH，但有内置运行时 → 安装到用户级环境目录 ──────
-      dshSource = 'bundled';
-      const envDir = dshEnvDir();
-
-      // 检查用户级环境是否已安装完整
-      const runtimeNodeExe = runtimeUpdater.ensureRuntime({ envDir, resourcesPath });
-      if (runtimeNodeExe) {
-        sendSplashProgress('检测到 DSH 环境', { sub: '已就绪，直接启动', progress: 35 });
-      } else {
-        sendSplashProgress('正在安装 DSH 环境', { sub: '将内置引擎安装到用户目录，请稍候…', progress: 30 });
-        await new Promise((r) => setTimeout(r, 100));
-
-        // 首次安装：复制 ~33k 文件
-        sendSplashProgress('正在安装 DSH 环境（首次安装）', { sub: '复制运行时文件…', progress: 30 });
-
-        const deployed = runtimeUpdater.ensureRuntime({ envDir, resourcesPath });
-        if (!deployed) {
-          // 安装失败，直接用 resources 中的 bundled 运行时
-          log.warn('user-level env install failed, will use bundled resources directly');
-          sendSplashProgress('使用内置引擎', { sub: '直接运行安装包中的 DSH', progress: 35 });
-        } else {
-          // 安装成功：装 CLI shim，并把目录加入用户 PATH（命令行也能用 dsh）
-          runtimeUpdater.installShim(envDir);
-          runtimeUpdater.addEnvDirToPath(envDir);
-          sendSplashProgress('DSH 环境安装完成', { type: 'done', sub: '已加入命令行 PATH，准备启动', progress: 35 });
-        }
-      }
-    } else {
+    if (!hasSystemDsh && !bundledDshAvailable) {
       // ── 没有系统 DSH，也没有内置运行时 → 错误 ──────────────
       sendSplashProgress('未找到 DSH 环境', { type: 'err', sub: '系统未安装 DSH，且本安装包未携带内置引擎', progress: 30 });
       closeSplashWindow();
@@ -1037,6 +1011,50 @@ if (!gotLock) {
       );
       app.exit(1);
       return;
+    }
+
+    // ── 始终部署内置运行时到用户级环境（.dsh-desktop/）──────────────
+    // 设计目标：无论用户有没有系统 dsh，都把内置 node+dsh 部署到
+    // %USERPROFILE%\.dsh-desktop\，并加入 PATH，这样：
+    //   1. cmd 里始终可用 `dsh` 命令（install plugin / update 等）
+    //   2. 有系统 dsh 时优先用系统版本启动（保留用户插件/技能）
+    //   3. 无系统 dsh 时用 .dsh-desktop/ 版本启动
+    //   4. .dsh-desktop/ 始终可用作 fallback
+    if (bundledDshAvailable) {
+      dshSource = hasSystemDsh ? 'system' : 'bundled';
+      const envDir = dshEnvDir();
+
+      const runtimeNodeExe = runtimeUpdater.ensureRuntime({ envDir, resourcesPath });
+      if (runtimeNodeExe) {
+        sendSplashProgress('检测到 DSH 环境', { sub: '已就绪，直接启动', progress: 35 });
+      } else {
+        sendSplashProgress('正在安装 DSH 环境', { sub: '将内置引擎安装到用户目录，请稍候…', progress: 30 });
+        await new Promise((r) => setTimeout(r, 100));
+
+        sendSplashProgress('正在安装 DSH 环境（首次安装）', { sub: '复制运行时文件…', progress: 30 });
+
+        const deployed = runtimeUpdater.ensureRuntime({ envDir, resourcesPath });
+        if (!deployed) {
+          log.warn('user-level env install failed, will use bundled resources directly');
+          sendSplashProgress('使用内置引擎', { sub: '直接运行安装包中的 DSH', progress: 35 });
+        } else {
+          sendSplashProgress('DSH 环境安装完成', { type: 'done', sub: '准备启动', progress: 35 });
+        }
+      }
+
+      // 无论首次安装还是已存在，都确保 CLI shim 和 PATH 可用
+      if (runtimeUpdater.ensureRuntime({ envDir, resourcesPath })) {
+        runtimeUpdater.installShim(envDir);
+        runtimeUpdater.addEnvDirToPath(envDir);
+      }
+
+      if (hasSystemDsh) {
+        sendSplashProgress('检测到系统 DSH', { type: 'done', sub: '优先使用系统版本（保留插件/技能）', progress: 35 });
+      }
+    } else {
+      // 有系统 dsh 但无内置运行时（精简版安装包）
+      dshSource = 'system';
+      sendSplashProgress('检测到系统 DSH', { type: 'done', sub: '使用系统已安装版本', progress: 35 });
     }
 
     // 步骤 2：准备数据目录
