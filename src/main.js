@@ -224,6 +224,103 @@ function ensureDshHome(hasSystemDsh) {
   }
 }
 
+/**
+ * Clean non-symlink entries from ~/.dsh/profiles/node_modules/.
+ *
+ * dsh's `healProfilesModuleFallback` expects every entry in this directory to
+ * be a junction it manages. If a real directory exists (e.g. from a previous
+ * npm/pnpm install or a broken plugin install), dsh throws and crashes on
+ * startup. We proactively remove non-symlink entries so dsh can recreate them
+ * as junctions.
+ */
+function cleanProfilesNodeModules() {
+  const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+  const nmDir = path.join(dshHome, 'profiles', 'node_modules');
+  if (!fs.existsSync(nmDir)) return;
+
+  let cleaned = 0;
+  try {
+    for (const entry of fs.readdirSync(nmDir)) {
+      if (entry === '.bin' || entry === '.pnpm') continue;
+      const full = path.join(nmDir, entry);
+
+      // Scoped package directories (e.g. @anthropic-ai) are normal dirs,
+      // not symlinks. Their children are the actual junctions. Skip them
+      // at top level — only clean non-scoped non-symlink entries.
+      if (entry.startsWith('@')) continue;
+
+      let stat;
+      try {
+        stat = fs.lstatSync(full);
+      } catch {
+        continue;
+      }
+      if (!stat.isSymbolicLink() && stat.isDirectory()) {
+        try {
+          fs.rmSync(full, { recursive: true, force: true });
+          cleaned++;
+        } catch (err) {
+          log.warn(`cleanProfilesNodeModules: could not remove ${full}: ${err.message}`);
+        }
+      }
+    }
+  } catch (err) {
+    log.warn(`cleanProfilesNodeModules: error scanning ${nmDir}: ${err.message}`);
+  }
+  if (cleaned > 0) {
+    log.info(`cleanProfilesNodeModules: removed ${cleaned} non-symlink entries from ${nmDir}`);
+  }
+}
+
+/**
+ * Kill stale dsh processes before starting a new instance.
+ * When the app crashes or is force-killed, child dsh/node processes may
+ * survive and hold locks (e.g. task-board ledger), causing the next launch
+ * to fail with "ledger is already owned by process XXXX".
+ *
+ * On Windows we use wmic to find node processes whose command line contains
+ * "dsh" and kill their entire process tree.
+ */
+function killStaleDshProcesses() {
+  if (process.platform !== 'win32') return;
+  const { execSync } = require('node:child_process');
+  try {
+    // Find node processes whose command line contains "dsh" (case-insensitive)
+    const out = execSync(
+      'wmic process where "name=\'node.exe\'" get ProcessId,CommandLine /format:csv',
+      { encoding: 'utf-8', timeout: 8000, windowsHide: true },
+    );
+    const lines = out.split('\n').filter(l => l.trim());
+    let killed = 0;
+    for (const line of lines) {
+      // Skip header
+      if (line.toLowerCase().includes('processid') || line.toLowerCase().includes('commandline')) continue;
+      // CSV format: <commandline>,<pid>
+      const parts = line.split(',');
+      const pid = parts[parts.length - 1].trim();
+      const cmdLine = parts.slice(0, -1).join(',').toLowerCase();
+      if (!pid || pid === '0') continue;
+      // Match dsh-related processes but exclude ourselves (this app's main process)
+      if (cmdLine.includes('dsh') && !cmdLine.includes('dsh-my-simple-desktop') && !cmdLine.includes('electron')) {
+        try {
+          execSync(`taskkill /PID ${pid} /T /F`, {
+            stdio: 'ignore', timeout: 3000, windowsHide: true,
+          });
+          log.info(`killStaleDshProcesses: killed stale dsh pid ${pid}`);
+          killed++;
+        } catch (err) {
+          log.warn(`killStaleDshProcesses: failed to kill pid ${pid}: ${err.message}`);
+        }
+      }
+    }
+    if (killed > 0) {
+      log.info(`killStaleDshProcesses: killed ${killed} stale dsh process(es)`);
+    }
+  } catch (err) {
+    log.warn(`killStaleDshProcesses: wmic query failed: ${err.message}`);
+  }
+}
+
 /** The user-level dsh environment dir (independent of the app install). */
 function dshEnvDir() {
   return path.join(os.homedir(), '.dsh-desktop');
@@ -1059,6 +1156,13 @@ if (!gotLock) {
 
     // 步骤 2：准备数据目录
     sendSplashProgress('正在准备数据目录…', { progress: 40 });
+
+    // Kill stale dsh processes that may hold locks from a previous crash.
+    killStaleDshProcesses();
+
+    // Clean stale non-symlink entries in profiles/node_modules so dsh's
+    // healProfilesModuleFallback won't crash on startup.
+    cleanProfilesNodeModules();
 
     // 步骤 3：启动 DSH web 服务
     sendSplashProgress('正在启动 DSH 引擎…', { sub: '启动 Web 服务，请稍候', progress: 50 });
