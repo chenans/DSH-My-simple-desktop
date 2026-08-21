@@ -1,8 +1,17 @@
-# GitHub Actions — build & publish the Windows installer on tag push.
+# GitHub Actions — build & publish the Windows Lite installer on tag push.
 #
 # Trigger:    git tag v0.1.0 && git push origin v0.1.0
-# Artifacts:  DeepSeek Harness Desktop-<ver>-Setup.exe (+ .blockmap, latest.yml)
+# Artifacts:  DSH My Simple Desktop-<ver>-Lite-Setup.exe (+ .blockmap)
 #             uploaded to the GitHub Release for the tag.
+#
+# IMPORTANT: CI only builds the Lite edition (no bundled dsh runtime).
+# The Full edition requires the dsh/ directory which is .gitignored and
+# only exists on the developer's machine. Upload the Full installer
+# manually as a Release asset after CI completes:
+#
+#   1. Download the Lite installer from the CI-created Release
+#   2. Build Full locally: npm run dist
+#   3. Upload DSH My Simple Desktop-<ver>-Setup.exe to the same Release
 #
 # Note: CI runners have admin rights, so exe metadata editing (icon/version)
 # is enabled here even though the local config keeps it off.
@@ -43,15 +52,15 @@ jobs:
       - name: Run unit tests
         run: npm test
 
-      - name: Package NSIS installer
+      - name: Package Lite NSIS installer
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win nsis --publish onTagOrDraft
+        run: npx electron-builder --config electron-builder.lite.yml --win nsis --publish onTagOrDraft
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
-          name: dsh-desktop-win-x64
+          name: dsh-desktop-lite-win-x64
           path: |
             release/*.exe
             release/*.blockmap

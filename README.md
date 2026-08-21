@@ -8,6 +8,8 @@
 
 > 适合团队内部使用，让没有 Node.js 环境或网络不好的同事也能直接双击运行 dsh。
 
+**English:** A minimal Electron wrapper for DeepSeek Harness (`dsh web`). Bundles a portable Node.js + dsh runtime so non-technical users can install and run dsh with zero dependencies. Features: auto dsh update check, crash recovery, system tray, close-guard (prevents accidental quit during LLM generation), model config guide. Windows x64 only.
+
 ## 📥 直接下载
 
 前往 **[GitHub Releases](https://github.com/chenans/DSH-My-simple-desktop/releases/latest)** 下载，按你的环境选择：
@@ -41,6 +43,10 @@
 - ❌ 没有崩溃信息上传
 - ❌ 没有多语言界面
 - ❌ 没有 MSIX 商店包
+
+## ⚠️ 关于代码签名
+
+安装包**未经过代码签名**（没有 EV/OV 证书）。Windows SmartScreen 可能会弹出"不识别的发布者"警告，点击"更多信息 → 仍要运行"即可。这是个人/团队内部项目的常见做法，不影响功能。如果你有签名证书，可以在 `electron-builder.yml` 中配置 `win.certificateFile` 后自行打包。
 
 ## 架构
 
