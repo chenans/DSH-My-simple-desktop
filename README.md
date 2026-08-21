@@ -14,8 +14,8 @@
 
 | 版本 | 下载 | 大小 | 适用人群 |
 |------|------|------|---------|
-| **完整版** | [DSH.My.Simple.Desktop-0.1.13-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.13/DSH.My.Simple.Desktop-0.1.13-Setup.exe) | 151.8 MB | 没装 dsh / 离线环境，**无需任何预装**，开箱即用 |
-| **精简版** | [DSH.My.Simple.Desktop-0.1.13-Lite-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.13/DSH.My.Simple.Desktop-0.1.13-Lite-Setup.exe) | 81.5 MB | 本地已装 dsh 的用户，安装快 |
+| **完整版** | [DSH.My.Simple.Desktop-0.1.17-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.17/DSH.My.Simple.Desktop-0.1.17-Setup.exe) | 151.8 MB | 没装 dsh / 离线环境，**无需任何预装**，开箱即用 |
+| **精简版** | [DSH.My.Simple.Desktop-0.1.17-Lite-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.17/DSH.My.Simple.Desktop-0.1.17-Lite-Setup.exe) | 81.5 MB | 本地已装 dsh 的用户，安装快 |
 
 - **完整版**：内置完整 dsh 运行时（node.exe + 全部依赖），首次启动自动安装环境到 `%USERPROFILE%\.dsh-desktop` 并加入命令行 PATH；每次启动自动检查 dsh 更新
 - **精简版**：使用系统已安装的 dsh；若系统没有 dsh 会提示安装 dsh 或改用完整版
