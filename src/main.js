@@ -636,11 +636,90 @@ function applyChromeTheme() {
 }
 
 /**
- * Check if there are active LLM tasks in the dsh web frontend.
- * Injects JS into the renderer to detect:
- *   1. Active EventSource (SSE) connections — used for streaming LLM responses
- *   2. "Stop generating" button visible in the DOM — dsh shows this while generating
- *   3. Active fetch requests to /api/ endpoints (best-effort via Performance API)
+ * Inject a request tracker into the dsh web page.
+ * Monkey-patches fetch() and EventSource to count active streaming/API requests.
+ * Stores the count on window.__activeRequests for later checking.
+ * Called via did-finish-load on the main window.
+ */
+function injectRequestTracker() {
+  if (!mainWindow || !mainWindow.webContents) return;
+  mainWindow.webContents.executeJavaScript(`
+    (function() {
+      if (window.__dshRequestTracker) return; // already injected
+      var activeCount = 0;
+      window.__activeRequests = 0;
+
+      // Track fetch requests
+      var origFetch = window.fetch;
+      window.fetch = function() {
+        var url = arguments[0];
+        if (typeof url === 'object' && url && url.url) url = url.url;
+        url = String(url || '');
+        // Only track API calls (not static assets)
+        if (url.indexOf('/api/') !== -1 || url.indexOf('/chat') !== -1 || url.indexOf('/stream') !== -1 || url.indexOf('/completions') !== -1) {
+          activeCount++;
+          window.__activeRequests = activeCount;
+          var p = origFetch.apply(this, arguments);
+          p.finally(function() {
+            activeCount--;
+            window.__activeRequests = activeCount;
+          });
+          return p;
+        }
+        return origFetch.apply(this, arguments);
+      };
+
+      // Track EventSource (SSE) connections
+      var OrigEventSource = window.EventSource;
+      if (OrigEventSource) {
+        window.EventSource = function(url, config) {
+          var es = new OrigEventSource(url, config);
+          activeCount++;
+          window.__activeRequests = activeCount;
+          es.addEventListener('error', function() {
+            activeCount--;
+            window.__activeRequests = activeCount;
+          });
+          es.addEventListener('close', function() {
+            activeCount--;
+            window.__activeRequests = activeCount;
+          });
+          return es;
+        };
+        window.EventSource.prototype = OrigEventSource.prototype;
+      }
+
+      // Track XMLHttpRequest
+      var OrigXHROpen = XMLHttpRequest.prototype.open;
+      var OrigXHRSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.open = function(method, url) {
+        this.__dshUrl = url;
+        return OrigXHROpen.apply(this, arguments);
+      };
+      XMLHttpRequest.prototype.send = function() {
+        var self = this;
+        var url = String(self.__dshUrl || '');
+        if (url.indexOf('/api/') !== -1 || url.indexOf('/chat') !== -1 || url.indexOf('/stream') !== -1 || url.indexOf('/completions') !== -1) {
+          activeCount++;
+          window.__activeRequests = activeCount;
+          self.addEventListener('loadend', function() {
+            activeCount--;
+            window.__activeRequests = activeCount;
+          });
+        }
+        return OrigXHRSend.apply(this, arguments);
+      };
+
+      window.__dshRequestTracker = true;
+      console.log('[DSH Desktop] Request tracker injected');
+    })()
+  `, true).catch(() => {});
+}
+
+/**
+ * Check if there are active LLM/API requests in the dsh web frontend.
+ * Relies on the injected request tracker (injectRequestTracker).
+ * Also does a DOM-based fallback check for visible "generating" indicators.
  * Returns true if any active task is detected.
  */
 async function checkActiveLlmTask() {
@@ -648,65 +727,38 @@ async function checkActiveLlmTask() {
   try {
     const result = await mainWindow.webContents.executeJavaScript(`
       (function() {
-        // Check 1: Active EventSource connections (SSE streaming)
-        // dsh uses SSE for streaming LLM responses
-        var hasSSE = false;
-        try {
-          // EventSource instances are not directly enumerable, but we can check
-          // if there are any active entries in PerformanceObserver for SSE
-          var entries = performance.getEntriesByType('resource');
-          for (var i = 0; i < entries.length; i++) {
-            if (entries[i].initiatorType === 'other' && entries[i].name.includes('/api/')) {
-              // Recent API call within last 5 seconds that hasn't finished
-              if (Date.now() - entries[i].startTime < 5000 && entries[i].responseEnd === 0) {
-                hasSSE = true;
-                break;
-              }
-            }
-          }
-        } catch (e) {}
+        // Primary: check injected request tracker
+        var activeReqs = window.__activeRequests || 0;
 
-        // Check 2: "Stop generating" button or similar UI element
-        // dsh typically shows a stop button while generating
-        var hasStopButton = false;
+        // Fallback: DOM-based check for any visible loading/generating state
+        var hasLoading = false;
         try {
-          var stopSelectors = [
-            '[data-testid*="stop"]',
-            '[class*="stop-generating"]',
-            '[class*="stopGenerating"]',
-            'button[aria-label*="stop"]',
-            'button[aria-label*="Stop"]',
+          // Check for any element with loading/spinner class that's visible
+          var selectors = [
+            '[class*="loading"]:not([style*="display: none"])',
+            '[class*="spinner"]:not([style*="display: none"])',
             '[class*="generating"]',
-            '[class*="loading"]:not([class*="hidden"])',
+            '[class*="thinking"]',
+            '[class*="streaming"]',
+            '[class*="abort"]',
+            '[class*="stop"]',
+            '[role="button"][aria-label*="stop" i]',
+            '[role="button"][aria-label*="abort" i]',
+            '[role="button"][aria-label*="cancel" i]',
           ];
-          for (var s = 0; s < stopSelectors.length; s++) {
-            var el = document.querySelector(stopSelectors[s]);
-            if (el && el.offsetParent !== null) {
-              hasStopButton = true;
-              break;
-            }
-          }
-        } catch (e) {}
-
-        // Check 3: Check for any visible "thinking" or "generating" indicators
-        var hasGeneratingIndicator = false;
-        try {
-          var bodyText = document.body.innerText || '';
-          // Check for common generating indicators (case-insensitive)
-          var lowerText = bodyText.toLowerCase();
-          if (lowerText.includes('generating') || lowerText.includes('thinking') || lowerText.includes('正在生成') || lowerText.includes('正在思考')) {
-            // Make sure it's not just static text by checking if there's a spinner/animation
-            var spinners = document.querySelectorAll('[class*="spin"], [class*="animate"], [class*="pulse"]');
-            for (var sp = 0; sp < spinners.length; sp++) {
-              if (spinners[sp].offsetParent !== null) {
-                hasGeneratingIndicator = true;
+          for (var i = 0; i < selectors.length; i++) {
+            var els = document.querySelectorAll(selectors[i]);
+            for (var j = 0; j < els.length; j++) {
+              if (els[j].offsetParent !== null || els[j].offsetWidth > 0) {
+                hasLoading = true;
                 break;
               }
             }
+            if (hasLoading) break;
           }
         } catch (e) {}
 
-        return hasSSE || hasStopButton || hasGeneratingIndicator;
+        return activeReqs > 0 || hasLoading;
       })()
     `, true);
     return !!result;
@@ -748,7 +800,7 @@ function createMainWindow(url) {
 
   // close-to-tray / quit behaviour
   let closeGuardInProgress = false;
-  mainWindow.on('close', async (e) => {
+  mainWindow.on('close', (e) => {
     if (isQuitting || isSmoke) return;
     if (settings.get('closeToTray', false)) {
       e.preventDefault();
@@ -761,32 +813,46 @@ function createMainWindow(url) {
     e.preventDefault();
     closeGuardInProgress = true;
 
-    try {
-      const hasActiveTask = await checkActiveLlmTask();
-      if (hasActiveTask) {
-        const choice = await dialog.showMessageBox(mainWindow, {
-          type: 'warning',
-          buttons: ['仍然关闭', '取消'],
-          defaultId: 1,
-          cancelId: 1,
-          title: '有任务正在进行',
-          message: '检测到大模型任务正在进行中',
-          detail: '现在关闭可能导致会话中断或数据丢失。建议等待任务完成后再关闭。\n\n确定要强制关闭吗？',
-        });
-        if (choice.response === 1) {
-          // User cancelled — don't close
-          closeGuardInProgress = false;
-          return;
-        }
-      }
-    } catch (err) {
-      log.warn(`close guard check failed: ${err.message}`);
-    }
+    log.info('close guard: checking active LLM task...');
 
-    // Proceed with close
-    closeGuardInProgress = false;
-    isQuitting = true;
-    mainWindow.close();
+    checkActiveLlmTask()
+      .then((hasActiveTask) => {
+        log.info(`close guard: hasActiveTask=${hasActiveTask}`);
+        if (hasActiveTask) {
+          return dialog
+            .showMessageBox(mainWindow, {
+              type: 'warning',
+              buttons: ['仍然关闭', '取消'],
+              defaultId: 1,
+              cancelId: 1,
+              title: '有任务正在进行',
+              message: '检测到大模型任务正在进行中',
+              detail: '现在关闭可能导致会话中断或数据丢失。建议等待任务完成后再关闭。\n\n确定要强制关闭吗？',
+            })
+            .then((choice) => {
+              if (choice.response === 1) {
+                // User cancelled — don't close
+                closeGuardInProgress = false;
+                return false;
+              }
+              return true;
+            });
+        }
+        return true;
+      })
+      .then((shouldClose) => {
+        if (shouldClose) {
+          closeGuardInProgress = false;
+          isQuitting = true;
+          mainWindow.close();
+        }
+      })
+      .catch((err) => {
+        log.warn(`close guard check failed: ${err.message}`);
+        closeGuardInProgress = false;
+        isQuitting = true;
+        mainWindow.close();
+      });
   });
 
   // stay inside the dsh origin; anything else goes to the system browser
@@ -813,7 +879,11 @@ function createMainWindow(url) {
 
   // Inject a floating "📖 教程" button into the dsh SPA once it finishes loading.
   // The preload script exposes dshDesktop.app.openGuide() to the page.
+  // Also inject the request tracker for close-guard functionality.
   mainWindow.webContents.on('did-finish-load', () => {
+    // Inject request tracker first (for close guard)
+    injectRequestTracker();
+
     mainWindow.webContents.executeJavaScript(`
       (function() {
         // Avoid duplicate injection on reload
@@ -864,6 +934,11 @@ function createMainWindow(url) {
       // ignore injection errors (e.g. restricted context)
       log.warn('[inject] guide button injection failed: ' + err.message);
     });
+  });
+
+  // Re-inject request tracker after SPA navigation
+  mainWindow.webContents.on('did-navigate-in-page', () => {
+    injectRequestTracker();
   });
 
   mainWindow.loadURL(url);
