@@ -719,7 +719,6 @@ function injectRequestTracker() {
 /**
  * Check if there are active LLM/API requests in the dsh web frontend.
  * Relies on the injected request tracker (injectRequestTracker).
- * Also does a DOM-based fallback check for visible "generating" indicators.
  * Returns true if any active task is detected.
  */
 async function checkActiveLlmTask() {
@@ -727,38 +726,8 @@ async function checkActiveLlmTask() {
   try {
     const result = await mainWindow.webContents.executeJavaScript(`
       (function() {
-        // Primary: check injected request tracker
         var activeReqs = window.__activeRequests || 0;
-
-        // Fallback: DOM-based check for any visible loading/generating state
-        var hasLoading = false;
-        try {
-          // Check for any element with loading/spinner class that's visible
-          var selectors = [
-            '[class*="loading"]:not([style*="display: none"])',
-            '[class*="spinner"]:not([style*="display: none"])',
-            '[class*="generating"]',
-            '[class*="thinking"]',
-            '[class*="streaming"]',
-            '[class*="abort"]',
-            '[class*="stop"]',
-            '[role="button"][aria-label*="stop" i]',
-            '[role="button"][aria-label*="abort" i]',
-            '[role="button"][aria-label*="cancel" i]',
-          ];
-          for (var i = 0; i < selectors.length; i++) {
-            var els = document.querySelectorAll(selectors[i]);
-            for (var j = 0; j < els.length; j++) {
-              if (els[j].offsetParent !== null || els[j].offsetWidth > 0) {
-                hasLoading = true;
-                break;
-              }
-            }
-            if (hasLoading) break;
-          }
-        } catch (e) {}
-
-        return activeReqs > 0 || hasLoading;
+        return activeReqs > 0;
       })()
     `, true);
     return !!result;
