@@ -3,27 +3,43 @@
 /**
  * Simulated test for close guard logic (v0.1.17+).
  *
- * Tests the checkActiveLlmTask() logic which detects the send button's
- * aria-label: "停止生成" means a task is running, "发送消息" means idle.
+ * Tests checkActiveLlmTask() which uses multiple signals:
+ * 1. aria-label contains "停止"/"stop"/"abort"/"cancel"
+ * 2. SVG has <rect> (stop icon) and no <path> (send arrow)
+ * 3. aria-label does NOT contain "发送"/"send"/"submit"
  *
  * Run: node scripts/test-close-guard.js
  */
 
 // ── Minimal DOM shim ───────────────────────────────────────────────────────
 
-function createFakeButton(ariaLabel, disabled, visible) {
+function createFakeSvg(hasRect, hasPath) {
+  var rects = hasRect ? [{}] : [];
+  var paths = hasPath ? [{}] : [];
+  return {
+    querySelector: function (tag) {
+      if (tag === 'rect') return rects[0] || null;
+      if (tag === 'path') return paths[0] || null;
+      return null;
+    },
+  };
+}
+
+function createFakeButton(ariaLabel, opts) {
+  opts = opts || {};
+  var svg = createFakeSvg(opts.hasRect !== false, opts.hasPath !== false);
   return {
     className: 'uV2eYG_primary',
     _ariaLabel: ariaLabel,
-    _disabled: disabled,
-    offsetParent: visible ? {} : null,
+    _svg: opts.noSvg ? null : svg,
+    offsetParent: opts.visible === false ? null : {},
     getAttribute: function (name) {
       if (name === 'aria-label') return this._ariaLabel;
-      if (name === 'title') return null;
       return null;
     },
-    get disabled() {
-      return this._disabled;
+    querySelector: function (sel) {
+      if (sel === 'svg') return this._svg;
+      return null;
     },
   };
 }
@@ -38,13 +54,23 @@ function createFakeDocument(btn) {
 }
 
 // ── Extract the checkActiveLlmTask logic ───────────────────────────────────
-// This mirrors the exact JS injected in main.js checkActiveLlmTask()
 
 function checkActiveLlmTask(doc) {
   var btn = doc.querySelector('button.uV2eYG_primary');
   if (!btn) return false;
-  var label = btn.getAttribute('aria-label') || '';
-  return label === '停止生成';
+
+  var label = (btn.getAttribute('aria-label') || '').toLowerCase();
+  var hasStopLabel = label.indexOf('停止') !== -1 || label.indexOf('stop') !== -1 || label.indexOf('abort') !== -1 || label.indexOf('cancel') !== -1;
+  var hasSendLabel = label.indexOf('发送') !== -1 || label.indexOf('send') !== -1 || label.indexOf('submit') !== -1;
+
+  var svg = btn.querySelector('svg');
+  var hasRect = svg ? !!svg.querySelector('rect') : false;
+  var hasPath = svg ? !!svg.querySelector('path') : false;
+
+  if (hasStopLabel) return true;
+  if (hasRect && !hasPath && !hasSendLabel) return true;
+
+  return false;
 }
 
 // ── Test framework ──────────────────────────────────────────────────────────
@@ -64,152 +90,235 @@ function assert(condition, name) {
 
 // ── Tests ───────────────────────────────────────────────────────────────────
 
-console.log('\n=== Close Guard Simulated Tests (v0.1.17 — aria-label) ===\n');
+console.log('\n=== Close Guard Simulated Tests (v0.1.17 — multi-signal) ===\n');
 
-// Test 1: Idle — button not found → should NOT block close
-console.log('Test 1: Button not found (should NOT block close)');
+// ── Group 1: Button not found ──────────────────────────────────────────────
+
+console.log('Group 1: Button not found');
 (function () {
   var doc = createFakeDocument(null);
-  var result = checkActiveLlmTask(doc);
-  assert(result === false, 'No button → checkActiveLlmTask returns false');
+  assert(checkActiveLlmTask(doc) === false, 'No button → false');
 })();
 
-// Test 2: Idle — aria-label="发送消息", disabled=true (no text) → should NOT block
-console.log('\nTest 2: Idle — aria-label="发送消息", disabled (no text)');
+// ── Group 2: Idle states (should NOT block) ────────────────────────────────
+
+console.log('\nGroup 2: Idle states (should NOT block)');
+
 (function () {
-  var btn = createFakeButton('发送消息', true, true);
-  var doc = createFakeDocument(btn);
-  var result = checkActiveLlmTask(doc);
-  assert(result === false, 'Idle send button → checkActiveLlmTask returns false');
+  // Idle: 发送消息 + path icon (arrow), no rect
+  var btn = createFakeButton('发送消息', { hasRect: false, hasPath: true });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === false, 'Idle 发送消息 + path → false');
 })();
 
-// Test 3: Ready — aria-label="发送消息", disabled=false (text entered) → should NOT block
-console.log('\nTest 3: Ready — aria-label="发送消息", enabled (text entered)');
 (function () {
-  var btn = createFakeButton('发送消息', false, true);
-  var doc = createFakeDocument(btn);
-  var result = checkActiveLlmTask(doc);
-  assert(result === false, 'Ready send button → checkActiveLlmTask returns false');
+  // Ready: 发送消息 + path, enabled
+  var btn = createFakeButton('发送消息', { hasRect: false, hasPath: true });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === false, 'Ready 发送消息 + path → false');
 })();
 
-// Test 4: Generating — aria-label="停止生成", disabled=false → SHOULD block
-console.log('\nTest 4: Generating — aria-label="停止生成" (SHOULD block close)');
 (function () {
-  var btn = createFakeButton('停止生成', false, true);
-  var doc = createFakeDocument(btn);
-  var result = checkActiveLlmTask(doc);
-  assert(result === true, 'Generating → checkActiveLlmTask returns true');
+  // English: "Send message" + path
+  var btn = createFakeButton('Send message', { hasRect: false, hasPath: true });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === false, 'English "Send" + path → false');
 })();
 
-// Test 5: Generating — aria-label="停止生成" with different disabled state → SHOULD block
-console.log('\nTest 5: Generating — aria-label="停止生成", disabled=true (edge case)');
 (function () {
-  var btn = createFakeButton('停止生成', true, true);
-  var doc = createFakeDocument(btn);
-  var result = checkActiveLlmTask(doc);
-  assert(result === true, 'Generating (disabled) → checkActiveLlmTask returns true');
+  // Empty label + path
+  var btn = createFakeButton('', { hasRect: false, hasPath: true });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === false, 'Empty label + path → false');
 })();
 
-// Test 6: Button invisible but aria-label="停止生成" → SHOULD block (label is the signal, not visibility)
-console.log('\nTest 6: Generating but button invisible (label still says 停止生成)');
 (function () {
-  var btn = createFakeButton('停止生成', false, false);
-  var doc = createFakeDocument(btn);
-  var result = checkActiveLlmTask(doc);
-  assert(result === true, 'Invisible generating button → checkActiveLlmTask returns true');
+  // Null label + path
+  var btn = createFakeButton(null, { hasRect: false, hasPath: true });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === false, 'Null label + path → false');
 })();
 
-// Test 7: Empty aria-label → should NOT block
-console.log('\nTest 7: Empty aria-label');
+// ── Group 3: Generating states (SHOULD block) ──────────────────────────────
+
+console.log('\nGroup 3: Generating states (SHOULD block)');
+
 (function () {
-  var btn = createFakeButton('', false, true);
-  var doc = createFakeDocument(btn);
-  var result = checkActiveLlmTask(doc);
-  assert(result === false, 'Empty aria-label → checkActiveLlmTask returns false');
+  // 停止生成 + rect icon (stop square)
+  var btn = createFakeButton('停止生成', { hasRect: true, hasPath: false });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === true, '停止生成 + rect → true');
 })();
 
-// Test 8: null aria-label → should NOT block
-console.log('\nTest 8: null aria-label');
 (function () {
-  var btn = createFakeButton(null, false, true);
-  var doc = createFakeDocument(btn);
-  var result = checkActiveLlmTask(doc);
-  assert(result === false, 'null aria-label → checkActiveLlmTask returns false');
+  // English: "Stop generating" + rect
+  var btn = createFakeButton('Stop generating', { hasRect: true, hasPath: false });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === true, 'English "Stop" + rect → true');
 })();
 
-// Test 9: Different aria-label (e.g. "重新生成") → should NOT block
-console.log('\nTest 9: aria-label="重新生成" (not generating, just regenerate option)');
 (function () {
-  var btn = createFakeButton('重新生成', false, true);
-  var doc = createFakeDocument(btn);
-  var result = checkActiveLlmTask(doc);
-  assert(result === false, '"重新生成" → checkActiveLlmTask returns false');
+  // "停止" only (shorter label) + rect
+  var btn = createFakeButton('停止', { hasRect: true, hasPath: false });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === true, '停止 + rect → true');
 })();
 
-// Test 10: Case sensitivity — "停止生成" exact match only
-console.log('\nTest 10: Case/whitespace sensitivity');
 (function () {
-  var btn1 = createFakeButton('停止生成 ', false, true); // trailing space
-  var doc1 = createFakeDocument(btn1);
-  assert(checkActiveLlmTask(doc1) === false, 'Trailing space → false (exact match)');
-
-  var btn2 = createFakeButton(' 停止生成', false, true); // leading space
-  var doc2 = createFakeDocument(btn2);
-  assert(checkActiveLlmTask(doc2) === false, 'Leading space → false (exact match)');
-
-  var btn3 = createFakeButton('停止生成', false, true); // exact
-  var doc3 = createFakeDocument(btn3);
-  assert(checkActiveLlmTask(doc3) === true, 'Exact "停止生成" → true');
+  // "abort" label + rect
+  var btn = createFakeButton('Abort', { hasRect: true, hasPath: false });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === true, 'Abort + rect → true');
 })();
 
-// Test 11: State transitions — idle → generating → idle
-console.log('\nTest 11: State transitions (idle → generating → idle)');
 (function () {
-  var btn = createFakeButton('发送消息', true, true);
+  // "cancel" label + rect
+  var btn = createFakeButton('Cancel generation', { hasRect: true, hasPath: false });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === true, 'Cancel + rect → true');
+})();
+
+// ── Group 4: SVG-only detection (label changed but icon is rect) ───────────
+
+console.log('\nGroup 4: SVG-only detection (label changed, rect icon)');
+
+(function () {
+  // Unknown label + rect + no path + no send keyword → should block
+  var btn = createFakeButton('生成中', { hasRect: true, hasPath: false });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === true, 'Unknown label "生成中" + rect → true (SVG fallback)');
+})();
+
+(function () {
+  // Unknown label + rect + no path + no send keyword → should block
+  var btn = createFakeButton('Generating...', { hasRect: true, hasPath: false });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === true, 'Unknown label "Generating" + rect → true (SVG fallback)');
+})();
+
+(function () {
+  // No label at all + rect → should block
+  var btn = createFakeButton('', { hasRect: true, hasPath: false });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === true, 'Empty label + rect → true (SVG fallback)');
+})();
+
+// ── Group 5: Label-only detection (SVG changed but label says stop) ────────
+
+console.log('\nGroup 5: Label-only detection (SVG changed, stop label)');
+
+(function () {
+  // 停止生成 + path icon (dsh changed SVG but kept label) → should block
+  var btn = createFakeButton('停止生成', { hasRect: false, hasPath: true });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === true, '停止生成 + path (SVG changed) → true (label fallback)');
+})();
+
+(function () {
+  // Stop + path icon → should block
+  var btn = createFakeButton('Stop', { hasRect: false, hasPath: true });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === true, 'Stop + path (SVG changed) → true (label fallback)');
+})();
+
+// ── Group 6: Edge cases — rect + send label (should NOT block) ─────────────
+
+console.log('\nGroup 6: Edge cases — rect + send label (should NOT block)');
+
+(function () {
+  // 发送 + rect (weird case: dsh uses rect for send icon) → should NOT block
+  var btn = createFakeButton('发送', { hasRect: true, hasPath: false });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === false, '发送 + rect → false (send label takes priority)');
+})();
+
+(function () {
+  // Send + rect → should NOT block
+  var btn = createFakeButton('Send', { hasRect: true, hasPath: false });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === false, 'Send + rect → false (send label takes priority)');
+})();
+
+// ── Group 7: Edge cases — both rect and path ───────────────────────────────
+
+console.log('\nGroup 7: Edge cases — both rect and path present');
+
+(function () {
+  // 停止生成 + both rect and path → should block (stop label wins)
+  var btn = createFakeButton('停止生成', { hasRect: true, hasPath: true });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === true, '停止生成 + rect+path → true (stop label)');
+})();
+
+(function () {
+  // 发送消息 + both rect and path → should NOT block (send label, and hasPath so SVG fallback doesn't trigger)
+  var btn = createFakeButton('发送消息', { hasRect: true, hasPath: true });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === false, '发送消息 + rect+path → false');
+})();
+
+// ── Group 8: No SVG at all ─────────────────────────────────────────────────
+
+console.log('\nGroup 8: No SVG in button');
+
+(function () {
+  // 停止生成 + no SVG → should block (label only)
+  var btn = createFakeButton('停止生成', { noSvg: true });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === true, '停止生成 + no SVG → true (label only)');
+})();
+
+(function () {
+  // 发送消息 + no SVG → should NOT block
+  var btn = createFakeButton('发送消息', { noSvg: true });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === false, '发送消息 + no SVG → false');
+})();
+
+(function () {
+  // Unknown label + no SVG → should NOT block (no signal)
+  var btn = createFakeButton('未知', { noSvg: true });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === false, 'Unknown label + no SVG → false (no signal)');
+})();
+
+// ── Group 9: State transitions ─────────────────────────────────────────────
+
+console.log('\nGroup 9: State transitions (idle → generating → idle)');
+
+(function () {
+  var btn = createFakeButton('发送消息', { hasRect: false, hasPath: true });
   var doc = createFakeDocument(btn);
 
   // Idle
   assert(checkActiveLlmTask(doc) === false, 'Initial idle → false');
 
-  // User types text
-  btn._ariaLabel = '发送消息';
-  btn._disabled = false;
-  assert(checkActiveLlmTask(doc) === false, 'Text entered → false');
-
-  // User sends, generation starts
+  // Generation starts: label + SVG change
   btn._ariaLabel = '停止生成';
-  btn._disabled = false;
+  btn._svg = createFakeSvg(true, false);
   assert(checkActiveLlmTask(doc) === true, 'Generation started → true');
 
-  // Generation continues
-  assert(checkActiveLlmTask(doc) === true, 'Still generating → true');
-
-  // Generation ends
+  // Generation ends: label + SVG revert
   btn._ariaLabel = '发送消息';
-  btn._disabled = true;
+  btn._svg = createFakeSvg(false, true);
   assert(checkActiveLlmTask(doc) === false, 'Generation ended → false');
 })();
 
-// Test 12: Button with different className → not found
-console.log('\nTest 12: Button with different className (not found)');
+// ── Group 10: i18n resilience — dsh changes all text ───────────────────────
+
+console.log('\nGroup 10: i18n resilience — dsh switches to English');
+
 (function () {
-  var doc = {
-    querySelector: function (sel) {
-      if (sel === 'button.uV2eYG_primary') return null; // different class
-      return null;
-    },
-  };
-  var result = checkActiveLlmTask(doc);
-  assert(result === false, 'Wrong className → checkActiveLlmTask returns false');
+  // dsh switches to English: "Stop generating" + rect
+  var btn = createFakeButton('Stop generating', { hasRect: true, hasPath: false });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === true, 'English "Stop generating" + rect → true');
 })();
 
-// Test 13: Multiple buttons with same class — querySelector returns first match
-console.log('\nTest 13: querySelector returns first match');
 (function () {
-  var generatingBtn = createFakeButton('停止生成', false, true);
-  var doc = createFakeDocument(generatingBtn);
-  var result = checkActiveLlmTask(doc);
-  assert(result === true, 'First match is generating → true');
+  // dsh switches to English: "Send" + path
+  var btn = createFakeButton('Send message', { hasRect: false, hasPath: true });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === false, 'English "Send" + path → false');
+})();
+
+// ── Group 11: dsh changes text to something unexpected ─────────────────────
+
+console.log('\nGroup 11: dsh changes text to unexpected values');
+
+(function () {
+  // Label becomes "中断" (abort synonym) + rect → should block
+  var btn = createFakeButton('中断生成', { hasRect: true, hasPath: false });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === true, '中断 + rect → true');
+})();
+
+(function () {
+  // Label becomes "中断" + path (no rect) → should NOT block (中断 not in keyword list, no rect)
+  // This is a known limitation — if dsh uses a completely new synonym without rect
+  var btn = createFakeButton('中断', { hasRect: false, hasPath: true });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === false, '中断 + path → false (limitation: unknown synonym)');
+})();
+
+(function () {
+  // Label becomes "中断" + rect (no path) → should block via SVG fallback
+  var btn = createFakeButton('中断', { hasRect: true, hasPath: false });
+  assert(checkActiveLlmTask(createFakeDocument(btn)) === true, '中断 + rect → true (SVG fallback catches it)');
 })();
 
 // ── Summary ─────────────────────────────────────────────────────────────────

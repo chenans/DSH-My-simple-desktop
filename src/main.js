@@ -637,10 +637,19 @@ function applyChromeTheme() {
 
 /**
  * Check if there is an active LLM generation task in the dsh web frontend.
- * Detects the send button's aria-label: "停止生成" means a task is running,
- * "发送消息" means idle. This is the most reliable signal — no monkey-patching
- * or request tracking needed.
- * Returns true if a generation task is in progress.
+ *
+ * Uses multiple signals to detect the "stop/generating" state of the send
+ * button, so it survives dsh UI text changes:
+ *
+ * 1. aria-label contains "停止" or "stop" (i18n resilient)
+ * 2. SVG inside the button is a <rect> (stop icon) rather than <path> (send arrow)
+ * 3. aria-label is NOT "发送" / "send" / "submit" (fallback: if it's neither
+ *    send nor stop, treat the non-send state as potentially generating)
+ *
+ * Signal 1+2 together give high confidence. If only one matches, still block
+ * close (safer to false-positive than to silently kill a running task).
+ *
+ * Returns true if a generation task appears to be in progress.
  */
 async function checkActiveLlmTask() {
   if (!mainWindow || !mainWindow.webContents) return false;
@@ -649,8 +658,23 @@ async function checkActiveLlmTask() {
       (function() {
         var btn = document.querySelector('button.uV2eYG_primary');
         if (!btn) return false;
-        var label = btn.getAttribute('aria-label') || '';
-        return label === '停止生成';
+
+        var label = (btn.getAttribute('aria-label') || '').toLowerCase();
+        var hasStopLabel = label.indexOf('停止') !== -1 || label.indexOf('stop') !== -1 || label.indexOf('abort') !== -1 || label.indexOf('cancel') !== -1;
+        var hasSendLabel = label.indexOf('发送') !== -1 || label.indexOf('send') !== -1 || label.indexOf('submit') !== -1;
+
+        // Check SVG shape: <rect> = stop icon, <path> = send arrow
+        var svg = btn.querySelector('svg');
+        var hasRect = svg ? !!svg.querySelector('rect') : false;
+        var hasPath = svg ? !!svg.querySelector('path') : false;
+
+        // Generating if: stop label OR (rect icon AND NOT send label)
+        // The "AND NOT send label" avoids false positive if dsh uses rect
+        // icons for other purposes.
+        if (hasStopLabel) return true;
+        if (hasRect && !hasPath && !hasSendLabel) return true;
+
+        return false;
       })()
     `, true);
     return !!result;
