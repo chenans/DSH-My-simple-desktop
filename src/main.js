@@ -636,103 +636,26 @@ function applyChromeTheme() {
 }
 
 /**
- * Inject a request tracker into the dsh web page.
- * Monkey-patches fetch() and EventSource to count active streaming/API requests.
- * Stores the count on window.__activeRequests for later checking.
- * Called via did-finish-load on the main window.
- */
-function injectRequestTracker() {
-  if (!mainWindow || !mainWindow.webContents) return;
-  mainWindow.webContents.executeJavaScript(`
-    (function() {
-      if (window.__dshRequestTracker) return; // already injected
-      var activeCount = 0;
-      window.__activeRequests = 0;
-
-      // Track fetch requests
-      var origFetch = window.fetch;
-      window.fetch = function() {
-        var url = arguments[0];
-        if (typeof url === 'object' && url && url.url) url = url.url;
-        url = String(url || '');
-        // Only track API calls (not static assets)
-        if (url.indexOf('/api/') !== -1 || url.indexOf('/chat') !== -1 || url.indexOf('/stream') !== -1 || url.indexOf('/completions') !== -1) {
-          activeCount++;
-          window.__activeRequests = activeCount;
-          var p = origFetch.apply(this, arguments);
-          p.finally(function() {
-            activeCount--;
-            window.__activeRequests = activeCount;
-          });
-          return p;
-        }
-        return origFetch.apply(this, arguments);
-      };
-
-      // Track EventSource (SSE) connections
-      var OrigEventSource = window.EventSource;
-      if (OrigEventSource) {
-        window.EventSource = function(url, config) {
-          var es = new OrigEventSource(url, config);
-          activeCount++;
-          window.__activeRequests = activeCount;
-          es.addEventListener('error', function() {
-            activeCount--;
-            window.__activeRequests = activeCount;
-          });
-          es.addEventListener('close', function() {
-            activeCount--;
-            window.__activeRequests = activeCount;
-          });
-          return es;
-        };
-        window.EventSource.prototype = OrigEventSource.prototype;
-      }
-
-      // Track XMLHttpRequest
-      var OrigXHROpen = XMLHttpRequest.prototype.open;
-      var OrigXHRSend = XMLHttpRequest.prototype.send;
-      XMLHttpRequest.prototype.open = function(method, url) {
-        this.__dshUrl = url;
-        return OrigXHROpen.apply(this, arguments);
-      };
-      XMLHttpRequest.prototype.send = function() {
-        var self = this;
-        var url = String(self.__dshUrl || '');
-        if (url.indexOf('/api/') !== -1 || url.indexOf('/chat') !== -1 || url.indexOf('/stream') !== -1 || url.indexOf('/completions') !== -1) {
-          activeCount++;
-          window.__activeRequests = activeCount;
-          self.addEventListener('loadend', function() {
-            activeCount--;
-            window.__activeRequests = activeCount;
-          });
-        }
-        return OrigXHRSend.apply(this, arguments);
-      };
-
-      window.__dshRequestTracker = true;
-      console.log('[DSH Desktop] Request tracker injected');
-    })()
-  `, true).catch(() => {});
-}
-
-/**
- * Check if there are active LLM/API requests in the dsh web frontend.
- * Relies on the injected request tracker (injectRequestTracker).
- * Returns true if any active task is detected.
+ * Check if there is an active LLM generation task in the dsh web frontend.
+ * Detects the send button's aria-label: "停止生成" means a task is running,
+ * "发送消息" means idle. This is the most reliable signal — no monkey-patching
+ * or request tracking needed.
+ * Returns true if a generation task is in progress.
  */
 async function checkActiveLlmTask() {
   if (!mainWindow || !mainWindow.webContents) return false;
   try {
     const result = await mainWindow.webContents.executeJavaScript(`
       (function() {
-        var activeReqs = window.__activeRequests || 0;
-        return activeReqs > 0;
+        var btn = document.querySelector('button.uV2eYG_primary');
+        if (!btn) return false;
+        var label = btn.getAttribute('aria-label') || '';
+        return label === '停止生成';
       })()
     `, true);
     return !!result;
   } catch (err) {
-    log.warn(`checkActiveLlmTask: injection failed: ${err.message}`);
+    log.warn(`checkActiveLlmTask: check failed: ${err.message}`);
     return false;
   }
 }
@@ -848,11 +771,7 @@ function createMainWindow(url) {
 
   // Inject a floating "📖 教程" button into the dsh SPA once it finishes loading.
   // The preload script exposes dshDesktop.app.openGuide() to the page.
-  // Also inject the request tracker for close-guard functionality.
   mainWindow.webContents.on('did-finish-load', () => {
-    // Inject request tracker first (for close guard)
-    injectRequestTracker();
-
     mainWindow.webContents.executeJavaScript(`
       (function() {
         // Avoid duplicate injection on reload
@@ -903,11 +822,6 @@ function createMainWindow(url) {
       // ignore injection errors (e.g. restricted context)
       log.warn('[inject] guide button injection failed: ' + err.message);
     });
-  });
-
-  // Re-inject request tracker after SPA navigation
-  mainWindow.webContents.on('did-navigate-in-page', () => {
-    injectRequestTracker();
   });
 
   mainWindow.loadURL(url);

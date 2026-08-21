@@ -1,50 +1,51 @@
 'use strict';
 
 /**
- * Simulated test for close guard logic.
- * 
- * Tests the injected request tracker JS + checkActiveLlmTask JS
- * in a simulated DOM environment (jsdom-like) without Electron.
- * 
+ * Simulated test for close guard logic (v0.1.17+).
+ *
+ * Tests the checkActiveLlmTask() logic which detects the send button's
+ * aria-label: "停止生成" means a task is running, "发送消息" means idle.
+ *
  * Run: node scripts/test-close-guard.js
  */
 
 // ── Minimal DOM shim ───────────────────────────────────────────────────────
-// Just enough for the injected scripts to run without throwing.
 
-function createFakeElement(visible = true) {
+function createFakeButton(ariaLabel, disabled, visible) {
   return {
+    className: 'uV2eYG_primary',
+    _ariaLabel: ariaLabel,
+    _disabled: disabled,
     offsetParent: visible ? {} : null,
-    offsetWidth: visible ? 100 : 0,
-    style: {},
+    getAttribute: function (name) {
+      if (name === 'aria-label') return this._ariaLabel;
+      if (name === 'title') return null;
+      return null;
+    },
+    get disabled() {
+      return this._disabled;
+    },
   };
 }
 
-const fakeDocument = {
-  body: {
-    innerText: '',
-    appendChild: () => {},
-  },
-  getElementById: () => null,
-  querySelector: (sel) => {
-    // Simulate: no matching elements by default
-    return null;
-  },
-  querySelectorAll: (sel) => {
-    // Simulate: no matching elements by default
-    return [];
-  },
-};
+function createFakeDocument(btn) {
+  return {
+    querySelector: function (sel) {
+      if (sel === 'button.uV2eYG_primary') return btn;
+      return null;
+    },
+  };
+}
 
-const fakeWindow = {
-  __dshRequestTracker: false,
-  __activeRequests: 0,
-  document: fakeDocument,
-  console: console,
-  performance: {
-    getEntriesByType: () => [],
-  },
-};
+// ── Extract the checkActiveLlmTask logic ───────────────────────────────────
+// This mirrors the exact JS injected in main.js checkActiveLlmTask()
+
+function checkActiveLlmTask(doc) {
+  var btn = doc.querySelector('button.uV2eYG_primary');
+  if (!btn) return false;
+  var label = btn.getAttribute('aria-label') || '';
+  return label === '停止生成';
+}
 
 // ── Test framework ──────────────────────────────────────────────────────────
 
@@ -61,354 +62,160 @@ function assert(condition, name) {
   }
 }
 
-// ── Extract the tracker injection script ────────────────────────────────────
-// We replicate the exact logic from main.js injectRequestTracker()
-
-function injectTracker(win) {
-  if (win.__dshRequestTracker) return;
-
-  var activeCount = 0;
-  win.__activeRequests = 0;
-
-  // Track fetch
-  var origFetch = win.fetch;
-  win.fetch = function () {
-    var url = arguments[0];
-    if (typeof url === 'object' && url && url.url) url = url.url;
-    url = String(url || '');
-    if (
-      url.indexOf('/api/') !== -1 ||
-      url.indexOf('/chat') !== -1 ||
-      url.indexOf('/stream') !== -1 ||
-      url.indexOf('/completions') !== -1
-    ) {
-      activeCount++;
-      win.__activeRequests = activeCount;
-
-      // Simulate a promise that can be resolved later
-      var resolveFn, rejectFn;
-      var p = new Promise(function (resolve, reject) {
-        resolveFn = resolve;
-        rejectFn = reject;
-      });
-      p.finally = function (cb) {
-        var orig = p.then.bind(p);
-        return p.then(
-          function (v) {
-            cb();
-            return v;
-          },
-          function (e) {
-            cb();
-            throw e;
-          }
-        );
-      };
-      // Store resolve/reject for test control
-      p.__resolve = resolveFn;
-      p.__reject = rejectFn;
-      // When promise settles, decrement
-      p.then(
-        function () {
-          activeCount--;
-          win.__activeRequests = activeCount;
-        },
-        function () {
-          activeCount--;
-          win.__activeRequests = activeCount;
-        }
-      );
-      return p;
-    }
-    return origFetch ? origFetch.apply(this, arguments) : Promise.resolve({});
-  };
-
-  // Track EventSource
-  var OrigEventSource = win.EventSource;
-  if (OrigEventSource) {
-    win.EventSource = function (url, config) {
-      var es = new OrigEventSource(url, config);
-      activeCount++;
-      win.__activeRequests = activeCount;
-      es.addEventListener('error', function () {
-        activeCount--;
-        win.__activeRequests = activeCount;
-      });
-      es.addEventListener('close', function () {
-        activeCount--;
-        win.__activeRequests = activeCount;
-      });
-      return es;
-    };
-    win.EventSource.prototype = OrigEventSource.prototype;
-  }
-
-  // Track XHR
-  var OrigXHROpen = win.XMLHttpRequest ? win.XMLHttpRequest.prototype.open : null;
-  var OrigXHRSend = win.XMLHttpRequest ? win.XMLHttpRequest.prototype.send : null;
-  if (win.XMLHttpRequest) {
-    win.XMLHttpRequest.prototype.open = function (method, url) {
-      this.__dshUrl = url;
-      return OrigXHROpen.apply(this, arguments);
-    };
-    win.XMLHttpRequest.prototype.send = function () {
-      var self = this;
-      var url = String(self.__dshUrl || '');
-      if (
-        url.indexOf('/api/') !== -1 ||
-        url.indexOf('/chat') !== -1 ||
-        url.indexOf('/stream') !== -1 ||
-        url.indexOf('/completions') !== -1
-      ) {
-        activeCount++;
-        win.__activeRequests = activeCount;
-        self.addEventListener('loadend', function () {
-          activeCount--;
-          win.__activeRequests = activeCount;
-        });
-      }
-      return OrigXHRSend.apply(this, arguments);
-    };
-  }
-
-  win.__dshRequestTracker = true;
-}
-
-// ── Extract the checkActiveLlmTask script ───────────────────────────────────
-
-function checkActive(win) {
-  var activeReqs = win.__activeRequests || 0;
-  return activeReqs > 0;
-}
-
 // ── Tests ───────────────────────────────────────────────────────────────────
 
-console.log('\n=== Close Guard Simulated Tests ===\n');
+console.log('\n=== Close Guard Simulated Tests (v0.1.17 — aria-label) ===\n');
 
-// Test 1: No active requests → should allow close
-console.log('Test 1: No active requests (should NOT block close)');
+// Test 1: Idle — button not found → should NOT block close
+console.log('Test 1: Button not found (should NOT block close)');
 (function () {
-  var win = Object.create(fakeWindow);
-  win.__dshRequestTracker = false;
-  win.__activeRequests = 0;
-  win.document = Object.create(fakeDocument);
-  win.document.querySelectorAll = () => [];
-  win.document.querySelector = () => null;
-  injectTracker(win);
-  var result = checkActive(win);
-  assert(result === false, 'No active requests → checkActive returns false');
+  var doc = createFakeDocument(null);
+  var result = checkActiveLlmTask(doc);
+  assert(result === false, 'No button → checkActiveLlmTask returns false');
 })();
 
-// Test 2: Active fetch to /api/chat → should block close
-console.log('\nTest 2: Active fetch to /api/chat (should block close)');
+// Test 2: Idle — aria-label="发送消息", disabled=true (no text) → should NOT block
+console.log('\nTest 2: Idle — aria-label="发送消息", disabled (no text)');
 (function () {
-  var win = Object.create(fakeWindow);
-  win.__dshRequestTracker = false;
-  win.__activeRequests = 0;
-  win.fetch = function () {
-    return Promise.resolve({});
-  };
-  win.document = Object.create(fakeDocument);
-  win.document.querySelectorAll = () => [];
-  win.document.querySelector = () => null;
-  injectTracker(win);
-
-  // Simulate a fetch call to /api/chat that hasn't resolved yet
-  var pendingPromise = win.fetch('/api/chat/completions', {
-    method: 'POST',
-    body: JSON.stringify({ messages: [{ role: 'user', content: 'hello' }] }),
-  });
-
-  var result = checkActive(win);
-  assert(result === true, 'Active /api/chat fetch → checkActive returns true');
-  assert(win.__activeRequests === 1, '__activeRequests === 1 during fetch');
-
-  // Resolve the fetch → should decrement
-  pendingPromise.__resolve({});
-  // Need to wait for microtask
-  // For sync test, we manually check after resolve
+  var btn = createFakeButton('发送消息', true, true);
+  var doc = createFakeDocument(btn);
+  var result = checkActiveLlmTask(doc);
+  assert(result === false, 'Idle send button → checkActiveLlmTask returns false');
 })();
 
-// Test 3: Fetch completes → should allow close
-console.log('\nTest 3: Fetch completed (should NOT block close)');
-async function test3() {
-  var win = Object.create(fakeWindow);
-  win.__dshRequestTracker = false;
-  win.__activeRequests = 0;
-  win.fetch = function () {
-    return Promise.resolve({});
-  };
-  win.document = Object.create(fakeDocument);
-  win.document.querySelectorAll = () => [];
-  win.document.querySelector = () => null;
-  injectTracker(win);
-
-  var p = win.fetch('/api/chat/completions');
-  p.__resolve({});
-
-  // Wait for microtasks to settle
-  await new Promise((r) => setTimeout(r, 0));
-
-  var result = checkActive(win);
-  assert(result === false, 'Completed fetch → checkActive returns false');
-  assert(win.__activeRequests === 0, '__activeRequests === 0 after fetch completes');
-}
-
-// Test 4: Multiple concurrent requests
-console.log('\nTest 4: Multiple concurrent requests (should block close)');
-async function test4() {
-  var win = Object.create(fakeWindow);
-  win.__dshRequestTracker = false;
-  win.__activeRequests = 0;
-  win.fetch = function () {
-    return Promise.resolve({});
-  };
-  win.document = Object.create(fakeDocument);
-  win.document.querySelectorAll = () => [];
-  win.document.querySelector = () => null;
-  injectTracker(win);
-
-  var p1 = win.fetch('/api/chat/completions');
-  var p2 = win.fetch('/api/stream/messages');
-  var p3 = win.fetch('/static/style.css'); // non-API, should NOT count
-
-  var result = checkActive(win);
-  assert(result === true, '2 active API requests → checkActive returns true');
-  assert(win.__activeRequests === 2, '__activeRequests === 2 (non-API excluded)');
-
-  p1.__resolve({});
-  await new Promise((r) => setTimeout(r, 0));
-
-  assert(win.__activeRequests === 1, '__activeRequests === 1 after first completes');
-  assert(checkActive(win) === true, 'Still 1 active → checkActive returns true');
-
-  p2.__resolve({});
-  await new Promise((r) => setTimeout(r, 0));
-
-  assert(win.__activeRequests === 0, '__activeRequests === 0 after all complete');
-  assert(checkActive(win) === false, 'All complete → checkActive returns false');
-}
-
-// Test 5: Fetch error → should still decrement
-console.log('\nTest 5: Fetch error (should decrement counter)');
-async function test5() {
-  var win = Object.create(fakeWindow);
-  win.__dshRequestTracker = false;
-  win.__activeRequests = 0;
-  win.fetch = function () {
-    return Promise.resolve({});
-  };
-  win.document = Object.create(fakeDocument);
-  win.document.querySelectorAll = () => [];
-  win.document.querySelector = () => null;
-  injectTracker(win);
-
-  var p = win.fetch('/api/chat/completions');
-  assert(win.__activeRequests === 1, '__activeRequests === 1 during fetch');
-
-  p.__reject(new Error('network error'));
-  await new Promise((r) => setTimeout(r, 0));
-
-  assert(win.__activeRequests === 0, '__activeRequests === 0 after fetch error');
-  assert(checkActive(win) === false, 'Error fetch → checkActive returns false');
-}
-
-// Test 6: Non-API fetch should NOT be tracked
-console.log('\nTest 6: Non-API fetch (should NOT be tracked)');
+// Test 3: Ready — aria-label="发送消息", disabled=false (text entered) → should NOT block
+console.log('\nTest 3: Ready — aria-label="发送消息", enabled (text entered)');
 (function () {
-  var win = Object.create(fakeWindow);
-  win.__dshRequestTracker = false;
-  win.__activeRequests = 0;
-  var callCount = 0;
-  win.fetch = function () {
-    callCount++;
-    return Promise.resolve({});
-  };
-  win.document = Object.create(fakeDocument);
-  win.document.querySelectorAll = () => [];
-  win.document.querySelector = () => null;
-  injectTracker(win);
-
-  win.fetch('/static/style.css');
-  win.fetch('/favicon.ico');
-  win.fetch('https://cdn.example.com/lib.js');
-
-  assert(win.__activeRequests === 0, 'Non-API fetches → __activeRequests === 0');
-  assert(checkActive(win) === false, 'Non-API fetches → checkActive returns false');
+  var btn = createFakeButton('发送消息', false, true);
+  var doc = createFakeDocument(btn);
+  var result = checkActiveLlmTask(doc);
+  assert(result === false, 'Ready send button → checkActiveLlmTask returns false');
 })();
 
-// Test 7: Double injection guard
-console.log('\nTest 7: Double injection guard');
+// Test 4: Generating — aria-label="停止生成", disabled=false → SHOULD block
+console.log('\nTest 4: Generating — aria-label="停止生成" (SHOULD block close)');
 (function () {
-  var win = Object.create(fakeWindow);
-  win.__dshRequestTracker = false;
-  win.__activeRequests = 0;
-  win.fetch = function () {
-    return Promise.resolve({});
-  };
-  win.document = Object.create(fakeDocument);
-  win.document.querySelectorAll = () => [];
-  win.document.querySelector = () => null;
-
-  injectTracker(win);
-  var fetchAfterFirstInject = win.fetch;
-  injectTracker(win); // should be no-op
-  var fetchAfterSecondInject = win.fetch;
-
-  assert(win.__dshRequestTracker === true, 'Tracker flag set after first inject');
-  assert(fetchAfterFirstInject === fetchAfterSecondInject, 'Second inject is no-op (fetch unchanged)');
+  var btn = createFakeButton('停止生成', false, true);
+  var doc = createFakeDocument(btn);
+  var result = checkActiveLlmTask(doc);
+  assert(result === true, 'Generating → checkActiveLlmTask returns true');
 })();
 
-// Test 8: URL pattern matching variants
-console.log('\nTest 10: URL pattern matching variants');
-async function test8() {
-  var win = Object.create(fakeWindow);
-  win.__dshRequestTracker = false;
-  win.__activeRequests = 0;
-  win.fetch = function () {
-    return Promise.resolve({});
-  };
-  win.document = Object.create(fakeDocument);
-  win.document.querySelectorAll = () => [];
-  win.document.querySelector = () => null;
-  injectTracker(win);
-
-  // Various API URL patterns
-  var urls = [
-    '/api/chat/completions',
-    '/api/v1/messages',
-    '/chat/stream',
-    '/v1/completions',
-    '/api/sessions/123/stream',
-  ];
-
-  var promises = urls.map(function (u) {
-    return win.fetch(u);
-  });
-
-  assert(win.__activeRequests === urls.length, `All ${urls.length} API URLs tracked`);
-  assert(checkActive(win) === true, 'Multiple API URL patterns → checkActive returns true');
-
-  // Resolve all
-  promises.forEach(function (p) {
-    p.__resolve({});
-  });
-  await new Promise((r) => setTimeout(r, 0));
-
-  assert(win.__activeRequests === 0, 'All resolved → __activeRequests === 0');
-}
-
-// ── Run async tests ─────────────────────────────────────────────────────────
-
-(async function () {
-  await test3();
-  await test4();
-  await test5();
-  await test8();
-
-  console.log('\n=== Summary ===');
-  console.log(`  PASS: ${passCount}`);
-  console.log(`  FAIL: ${failCount}`);
-  console.log(failCount === 0 ? '\n  ✅ All tests passed!' : `\n  ❌ ${failCount} test(s) failed!`);
-  process.exit(failCount === 0 ? 0 : 1);
+// Test 5: Generating — aria-label="停止生成" with different disabled state → SHOULD block
+console.log('\nTest 5: Generating — aria-label="停止生成", disabled=true (edge case)');
+(function () {
+  var btn = createFakeButton('停止生成', true, true);
+  var doc = createFakeDocument(btn);
+  var result = checkActiveLlmTask(doc);
+  assert(result === true, 'Generating (disabled) → checkActiveLlmTask returns true');
 })();
+
+// Test 6: Button invisible but aria-label="停止生成" → SHOULD block (label is the signal, not visibility)
+console.log('\nTest 6: Generating but button invisible (label still says 停止生成)');
+(function () {
+  var btn = createFakeButton('停止生成', false, false);
+  var doc = createFakeDocument(btn);
+  var result = checkActiveLlmTask(doc);
+  assert(result === true, 'Invisible generating button → checkActiveLlmTask returns true');
+})();
+
+// Test 7: Empty aria-label → should NOT block
+console.log('\nTest 7: Empty aria-label');
+(function () {
+  var btn = createFakeButton('', false, true);
+  var doc = createFakeDocument(btn);
+  var result = checkActiveLlmTask(doc);
+  assert(result === false, 'Empty aria-label → checkActiveLlmTask returns false');
+})();
+
+// Test 8: null aria-label → should NOT block
+console.log('\nTest 8: null aria-label');
+(function () {
+  var btn = createFakeButton(null, false, true);
+  var doc = createFakeDocument(btn);
+  var result = checkActiveLlmTask(doc);
+  assert(result === false, 'null aria-label → checkActiveLlmTask returns false');
+})();
+
+// Test 9: Different aria-label (e.g. "重新生成") → should NOT block
+console.log('\nTest 9: aria-label="重新生成" (not generating, just regenerate option)');
+(function () {
+  var btn = createFakeButton('重新生成', false, true);
+  var doc = createFakeDocument(btn);
+  var result = checkActiveLlmTask(doc);
+  assert(result === false, '"重新生成" → checkActiveLlmTask returns false');
+})();
+
+// Test 10: Case sensitivity — "停止生成" exact match only
+console.log('\nTest 10: Case/whitespace sensitivity');
+(function () {
+  var btn1 = createFakeButton('停止生成 ', false, true); // trailing space
+  var doc1 = createFakeDocument(btn1);
+  assert(checkActiveLlmTask(doc1) === false, 'Trailing space → false (exact match)');
+
+  var btn2 = createFakeButton(' 停止生成', false, true); // leading space
+  var doc2 = createFakeDocument(btn2);
+  assert(checkActiveLlmTask(doc2) === false, 'Leading space → false (exact match)');
+
+  var btn3 = createFakeButton('停止生成', false, true); // exact
+  var doc3 = createFakeDocument(btn3);
+  assert(checkActiveLlmTask(doc3) === true, 'Exact "停止生成" → true');
+})();
+
+// Test 11: State transitions — idle → generating → idle
+console.log('\nTest 11: State transitions (idle → generating → idle)');
+(function () {
+  var btn = createFakeButton('发送消息', true, true);
+  var doc = createFakeDocument(btn);
+
+  // Idle
+  assert(checkActiveLlmTask(doc) === false, 'Initial idle → false');
+
+  // User types text
+  btn._ariaLabel = '发送消息';
+  btn._disabled = false;
+  assert(checkActiveLlmTask(doc) === false, 'Text entered → false');
+
+  // User sends, generation starts
+  btn._ariaLabel = '停止生成';
+  btn._disabled = false;
+  assert(checkActiveLlmTask(doc) === true, 'Generation started → true');
+
+  // Generation continues
+  assert(checkActiveLlmTask(doc) === true, 'Still generating → true');
+
+  // Generation ends
+  btn._ariaLabel = '发送消息';
+  btn._disabled = true;
+  assert(checkActiveLlmTask(doc) === false, 'Generation ended → false');
+})();
+
+// Test 12: Button with different className → not found
+console.log('\nTest 12: Button with different className (not found)');
+(function () {
+  var doc = {
+    querySelector: function (sel) {
+      if (sel === 'button.uV2eYG_primary') return null; // different class
+      return null;
+    },
+  };
+  var result = checkActiveLlmTask(doc);
+  assert(result === false, 'Wrong className → checkActiveLlmTask returns false');
+})();
+
+// Test 13: Multiple buttons with same class — querySelector returns first match
+console.log('\nTest 13: querySelector returns first match');
+(function () {
+  var generatingBtn = createFakeButton('停止生成', false, true);
+  var doc = createFakeDocument(generatingBtn);
+  var result = checkActiveLlmTask(doc);
+  assert(result === true, 'First match is generating → true');
+})();
+
+// ── Summary ─────────────────────────────────────────────────────────────────
+
+console.log('\n=== Summary ===');
+console.log(`  PASS: ${passCount}`);
+console.log(`  FAIL: ${failCount}`);
+console.log(failCount === 0 ? '\n  All tests passed!' : `\n  ${failCount} test(s) failed!`);
+process.exit(failCount === 0 ? 0 : 1);
