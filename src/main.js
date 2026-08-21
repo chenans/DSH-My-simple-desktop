@@ -635,6 +635,87 @@ function applyChromeTheme() {
   }
 }
 
+/**
+ * Check if there are active LLM tasks in the dsh web frontend.
+ * Injects JS into the renderer to detect:
+ *   1. Active EventSource (SSE) connections — used for streaming LLM responses
+ *   2. "Stop generating" button visible in the DOM — dsh shows this while generating
+ *   3. Active fetch requests to /api/ endpoints (best-effort via Performance API)
+ * Returns true if any active task is detected.
+ */
+async function checkActiveLlmTask() {
+  if (!mainWindow || !mainWindow.webContents) return false;
+  try {
+    const result = await mainWindow.webContents.executeJavaScript(`
+      (function() {
+        // Check 1: Active EventSource connections (SSE streaming)
+        // dsh uses SSE for streaming LLM responses
+        var hasSSE = false;
+        try {
+          // EventSource instances are not directly enumerable, but we can check
+          // if there are any active entries in PerformanceObserver for SSE
+          var entries = performance.getEntriesByType('resource');
+          for (var i = 0; i < entries.length; i++) {
+            if (entries[i].initiatorType === 'other' && entries[i].name.includes('/api/')) {
+              // Recent API call within last 5 seconds that hasn't finished
+              if (Date.now() - entries[i].startTime < 5000 && entries[i].responseEnd === 0) {
+                hasSSE = true;
+                break;
+              }
+            }
+          }
+        } catch (e) {}
+
+        // Check 2: "Stop generating" button or similar UI element
+        // dsh typically shows a stop button while generating
+        var hasStopButton = false;
+        try {
+          var stopSelectors = [
+            '[data-testid*="stop"]',
+            '[class*="stop-generating"]',
+            '[class*="stopGenerating"]',
+            'button[aria-label*="stop"]',
+            'button[aria-label*="Stop"]',
+            '[class*="generating"]',
+            '[class*="loading"]:not([class*="hidden"])',
+          ];
+          for (var s = 0; s < stopSelectors.length; s++) {
+            var el = document.querySelector(stopSelectors[s]);
+            if (el && el.offsetParent !== null) {
+              hasStopButton = true;
+              break;
+            }
+          }
+        } catch (e) {}
+
+        // Check 3: Check for any visible "thinking" or "generating" indicators
+        var hasGeneratingIndicator = false;
+        try {
+          var bodyText = document.body.innerText || '';
+          // Check for common generating indicators (case-insensitive)
+          var lowerText = bodyText.toLowerCase();
+          if (lowerText.includes('generating') || lowerText.includes('thinking') || lowerText.includes('正在生成') || lowerText.includes('正在思考')) {
+            // Make sure it's not just static text by checking if there's a spinner/animation
+            var spinners = document.querySelectorAll('[class*="spin"], [class*="animate"], [class*="pulse"]');
+            for (var sp = 0; sp < spinners.length; sp++) {
+              if (spinners[sp].offsetParent !== null) {
+                hasGeneratingIndicator = true;
+                break;
+              }
+            }
+          }
+        } catch (e) {}
+
+        return hasSSE || hasStopButton || hasGeneratingIndicator;
+      })()
+    `, true);
+    return !!result;
+  } catch (err) {
+    log.warn(`checkActiveLlmTask: injection failed: ${err.message}`);
+    return false;
+  }
+}
+
 function createMainWindow(url) {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -666,12 +747,46 @@ function createMainWindow(url) {
   });
 
   // close-to-tray / quit behaviour
-  mainWindow.on('close', (e) => {
+  let closeGuardInProgress = false;
+  mainWindow.on('close', async (e) => {
     if (isQuitting || isSmoke) return;
     if (settings.get('closeToTray', false)) {
       e.preventDefault();
       mainWindow.hide();
+      return;
     }
+
+    // Check if there are active LLM tasks before quitting
+    if (closeGuardInProgress) return;
+    e.preventDefault();
+    closeGuardInProgress = true;
+
+    try {
+      const hasActiveTask = await checkActiveLlmTask();
+      if (hasActiveTask) {
+        const choice = await dialog.showMessageBox(mainWindow, {
+          type: 'warning',
+          buttons: ['仍然关闭', '取消'],
+          defaultId: 1,
+          cancelId: 1,
+          title: '有任务正在进行',
+          message: '检测到大模型任务正在进行中',
+          detail: '现在关闭可能导致会话中断或数据丢失。建议等待任务完成后再关闭。\n\n确定要强制关闭吗？',
+        });
+        if (choice.response === 1) {
+          // User cancelled — don't close
+          closeGuardInProgress = false;
+          return;
+        }
+      }
+    } catch (err) {
+      log.warn(`close guard check failed: ${err.message}`);
+    }
+
+    // Proceed with close
+    closeGuardInProgress = false;
+    isQuitting = true;
+    mainWindow.close();
   });
 
   // stay inside the dsh origin; anything else goes to the system browser
