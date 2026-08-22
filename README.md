@@ -18,9 +18,11 @@
 |------|------|------|---------|
 | **完整版** | [DSH.My.Simple.Desktop-0.1.17-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.17/DSH.My.Simple.Desktop-0.1.17-Setup.exe) | 151.8 MB | 没装 dsh / 离线环境，**无需任何预装**，开箱即用 |
 | **精简版** | [DSH.My.Simple.Desktop-0.1.17-Lite-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.17/DSH.My.Simple.Desktop-0.1.17-Lite-Setup.exe) | 81.5 MB | 本地已装 dsh 的用户，安装快 |
+| **插件版** | *按需构建* | 视插件量而定 | 内网/离线团队分发，内置作者预设的 dsh 插件与 agent-presets 快照，同事装完即用无需自行配置插件 |
 
 - **完整版**：内置完整 dsh 运行时（node.exe + 全部依赖），首次启动自动安装环境到 `%USERPROFILE%\.dsh-desktop` 并加入命令行 PATH；每次启动自动检查 dsh 更新
 - **精简版**：使用系统已安装的 dsh；若系统没有 dsh 会提示安装 dsh 或改用完整版
+- **插件版**：在完整版基础上额外内置作者本地的 dsh 插件增量包与 agent-presets 快照；**不内置模型配置/密钥**；首次启动将插件层幂等部署到 `~/.dsh`（不覆盖用户已有数据）；默认离线运行（跳过 dsh 内核更新检查），强制使用内置 dsh 运行时
 
 ## 功能
 
@@ -46,7 +48,36 @@
 
 ## ⚠️ 关于代码签名
 
-安装包**未经过代码签名**（没有 EV/OV 证书）。Windows SmartScreen 可能会弹出"不识别的发布者"警告，点击"更多信息 → 仍要运行"即可。这是个人/团队内部项目的常见做法，不影响功能。如果你有签名证书，可以在 `electron-builder.yml` 中配置 `win.certificateFile` 后自行打包。
+安装包默认使用**自签名证书**签名。Windows SmartScreen 仍可能弹出警告（自签名证书不在微软信任链中），点击"更多信息 → 仍要运行"即可。
+
+### 生成自签名证书并签名
+
+```powershell
+# 1. 生成自签名证书（首次执行）
+npm run cert:create
+# → 输出 build/certs/codesign.pfx + codesign.cer
+# → 自动安装到本机 Trusted Root（本机不再弹警告）
+
+# 2. 设置环境变量后打包（自动签名）
+$env:CSC_LINK = "build/certs/codesign.pfx"
+$env:CSC_KEY_PASSWORD = "<你设置的密码>"
+npm run dist          # 完整版
+npm run dist:lite     # 精简版
+npm run dist:plugins  # 插件版
+
+# 3. 对已构建的 exe 补签名（无需重新打包）
+npm run sign
+# 或指定文件
+powershell -File scripts/sign-exe.ps1 -FilePath "release/xxx-Setup.exe"
+```
+
+### 让其他机器信任自签名证书
+
+将 `build/certs/codesign.cer` 分发给同事，双击 → 安装证书 → 本地计算机 → 受信任的根证书颁发机构。或通过 AD 组策略批量推送。
+
+### 商业签名（消除 SmartScreen）
+
+如需完全消除 SmartScreen 警告，需购买商业 OV/EV 证书或订阅 [Azure Trusted Signing](https://learn.microsoft.com/en-us/azure/trusted-signing/)（~$9.99/月）。配置 `CSC_LINK` 指向商业 .pfx 后，打包流程不变。
 
 ## 架构
 
@@ -94,7 +125,13 @@ npm install -g @deepseek-ai/dsh
 npm.cmd run build:runtime   # 构建内嵌 dsh 运行时（dsh/ 目录，~340MB）
 npm.cmd run dist            # 打包完整版 NSIS 安装包
 npm.cmd run dist:lite       # 打包精简版 NSIS 安装包（不含内置 dsh）
+npm.cmd run dist:plugins    # 打包插件版 NSIS 安装包（含 dsh + 插件层快照）
 ```
+
+> 打包插件版前需先运行 `npm.cmd run build:plugin-layer`，该脚本会交互式选择要快照的
+> presets，对 `~/.dsh/profiles/node_modules` 与内置 `dsh/node_modules` 做差分，
+> 仅打包增量包到 `plugins-layer/`，并执行敏感文件安全扫描（发现 api_key/token/
+> secret/password/credential 等模式则构建失败）。
 
 产物在 `release/` 目录：
 
@@ -102,6 +139,7 @@ npm.cmd run dist:lite       # 打包精简版 NSIS 安装包（不含内置 dsh�
 |------|------|------|
 | `DSH My Simple Desktop-0.1.x-Setup.exe` | ~162 MB | **完整版**：内嵌 dsh 运行时，无 dsh 环境可直接用（离线环境/同事机器） |
 | `DSH My Simple Desktop-0.1.x-Lite-Setup.exe` | ~82 MB | **精简版**：仅应用本体，本地已装 dsh 的用户安装快；启动时优先用系统 dsh，没有则提示装 dsh 或用完整版 |
+| `DSH My Simple Desktop-0.1.x-Plugins-Setup.exe` | 视插件量 | **插件版**：完整版 + 作者本地插件/presets 快照增量，内网团队开箱即用；不含模型配置/密钥 |
 
 > 完整版**不依赖系统 Node.js 或 dsh CLI**——它内嵌了便携版 Node.js + 完整 dsh 依赖树。
 > 两个版本的**运行时选择逻辑相同**：每次启动先检测系统 dsh，有则用本地的；本地没有才用内置（完整版）。
@@ -114,6 +152,7 @@ npm.cmd run dist:lite       # 打包精简版 NSIS 安装包（不含内置 dsh�
 | `DSH_DESKTOP_URL` | `--dev` 模式加载的 URL（默认 `http://127.0.0.1:3080`） |
 | `DSH_DESKTOP_WORKSPACE` | dsh 进程工作目录 |
 | `DSH_DESKTOP_USER_DATA` | 覆盖 userData（测试/多实例隔离） |
+| `DSH_DESKTOP_OFFLINE` | 设为 `1` 跳过 dsh 内核更新检查（插件版启动时自动注入） |
 
 ## 目录结构
 
@@ -127,12 +166,17 @@ npm.cmd run dist:lite       # 打包精简版 NSIS 安装包（不含内置 dsh�
 │  └─ lib/
 │     ├─ port.js              端口扫描
 │     ├─ settings.js          设置持久化
-│     ├─ dsh-resolve.js       dsh 命令解析
-│     ├─ runtime-updater.js   dsh 运行时自动更新
+│     ├─ dsh-resolve.js       dsh 命令解析（含 forceBundled 参数）
+│     ├─ runtime-updater.js   dsh 运行时自动更新（支持 DSH_DESKTOP_OFFLINE）
+│     ├─ plugin-deployer.js   插件版首次启动部署逻辑（幂等非破坏性）
 │     └─ updater.js           electron-updater 封装（未接入更新源）
 ├─ scripts/                   构建脚本
+│  ├─ snapshot-plugin-layer.mjs  插件快照核心模块（可单测）
+│  └─ build-plugin-layer.ps1     插件快照编排脚本
 ├─ assets/                    图标资源
-├─ electron-builder.yml       打包配置
+├─ electron-builder.yml       完整版打包配置
+├─ electron-builder.lite.yml  精简版打包配置
+├─ electron-builder.plugins.yml  插件版打包配置
 └─ release/                   打包产物
 ```
 

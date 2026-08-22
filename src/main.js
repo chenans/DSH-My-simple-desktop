@@ -49,6 +49,7 @@ const { resolveDshCommand } = require('./lib/dsh-resolve');
 const settings = require('./lib/settings');
 const updater = require('./lib/updater');
 const runtimeUpdater = require('./lib/runtime-updater');
+const pluginDeployer = require('./lib/plugin-deployer');
 
 const APP_NAME = 'DSH My Simple Desktop';
 const DEFAULT_PORT = 3080;
@@ -198,9 +199,18 @@ function initSettings() {
  *     environments.
  */
 function ensureDshHome(hasSystemDsh) {
+  // Plugins edition: always set DSH_HOME to ~/.dsh, regardless of system dsh.
+  // The bundled plugins expect the standard data directory.
+  const isPlugins = app.isPackaged &&
+    pluginDeployer.isPluginsEdition(process.resourcesPath);
+
   if (process.env.DSH_HOME) {
     // User explicitly set it — always respect that.
     log.info(`DSH_HOME already set: ${process.env.DSH_HOME}`);
+  } else if (isPlugins) {
+    const dshHome = path.join(os.homedir(), '.dsh');
+    process.env.DSH_HOME = dshHome;
+    log.info(`DSH_HOME set to: ${dshHome} (plugins edition)`);
   } else if (hasSystemDsh) {
     // System dsh is available — don't override DSH_HOME.
     // The process will inherit the system default (%USERPROFILE%\.dsh).
@@ -486,10 +496,16 @@ function waitForHealthyUrl(port, timeoutMs) {
 }
 
 function startDsh(port, preferSystem) {
+  // Plugins edition: always use bundled dsh, never system dsh.
+  const isPlugins = app.isPackaged &&
+    pluginDeployer.isPluginsEdition(process.resourcesPath);
+  const forceBundled = isPlugins;
+
   const resolved = resolveDshCommand({
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
     preferSystem: preferSystem === true,
+    forceBundled,
     envDir: dshEnvDir(),
   });
   const cmd = resolved.cmd;
@@ -498,7 +514,8 @@ function startDsh(port, preferSystem) {
   // and will crash with "unknown option" if it receives it. The bundled dsh
   // never auto-opens a browser anyway, so we only add --no-open when using
   // the system dsh (preferSystem = true).
-  const noOpenFlag = preferSystem ? ['--no-open'] : [];
+  // Plugins edition always uses bundled dsh, so --no-open is never added.
+  const noOpenFlag = (!forceBundled && preferSystem) ? ['--no-open'] : [];
   // Support both resolved.args (bundled: [node, bin.js]) and legacy {cmd, needsShell}
   const args = resolved.args
     ? [...resolved.args, '--profile', 'web', '--port', String(port), ...noOpenFlag]
@@ -1197,14 +1214,31 @@ if (!gotLock) {
   app.whenReady().then(async () => {
     initSettings();
 
+    // Detect Plugins edition early — affects DSH_HOME, update checks, and
+    // whether system dsh is considered at all.
+    const resourcesPath0 = app.isPackaged ? process.resourcesPath : null;
+    const isPluginsEdition = resourcesPath0 &&
+      pluginDeployer.isPluginsEdition(resourcesPath0);
+
+    if (isPluginsEdition) {
+      // Plugins edition: lock to offline mode (no kernel auto-update).
+      // The bundled kernel + plugins are a matched set.
+      process.env.DSH_DESKTOP_OFFLINE = '1';
+      log.info('[plugins-edition] offline mode enabled (DSH_DESKTOP_OFFLINE=1)');
+    }
+
     // Determine whether system dsh is available early, so DSH_HOME can
     // be left at the system default when system dsh is used (preserving
     // plugins/skills installed via `dsh install skill`).
-    const hasSystemDsh = detectSystemDsh();
+    // Plugins edition ignores system dsh entirely.
+    const hasSystemDsh = isPluginsEdition ? false : detectSystemDsh();
     ensureDshHome(hasSystemDsh);
 
     log.info(`=== ${APP_NAME} ${app.getVersion()} starting (packaged=${app.isPackaged}) ===`);
     log.info(`electron ${process.versions.electron} / node ${process.versions.node} / platform ${process.platform}`);
+    if (isPluginsEdition) {
+      log.info('[plugins-edition] running in Plugins edition mode');
+    }
 
     registerIpc();
 
@@ -1308,12 +1342,43 @@ if (!gotLock) {
     // healProfilesModuleFallback won't crash on startup.
     cleanProfilesNodeModules();
 
+    // ── Plugins edition: deploy bundled plugin snapshot to ~/.dsh ──────
+    // Idempotent: skips if marker sha matches. Non-destructive: never
+    // overwrites user files. Failure is logged but does not block startup.
+    if (isPluginsEdition) {
+      sendSplashProgress('正在部署插件…', { sub: '首次启动需要初始化插件环境', progress: 45 });
+      try {
+        const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+        const result = await pluginDeployer.deployPluginLayer({
+          dshHome,
+          resourcesPath: process.resourcesPath,
+        });
+        if (result.deployed) {
+          log.info(`[plugins-edition] plugin layer deployed (copied=${result.copied}, skipped=${result.skipped})`);
+          sendSplashProgress('插件部署完成', { type: 'done', sub: `已安装 ${result.copied} 个文件`, progress: 48 });
+        } else if (result.reason === 'already deployed') {
+          log.info('[plugins-edition] plugin layer already deployed, skipping');
+        } else {
+          log.warn(`[plugins-edition] plugin layer not deployed: ${result.reason}`);
+        }
+      } catch (err) {
+        log.error('[plugins-edition] plugin deployment error: ' + err.message);
+        // Don't block startup — dsh will launch bare without plugins
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+
     // 步骤 3：启动 DSH web 服务
     sendSplashProgress('正在启动 DSH 引擎…', { sub: '启动 Web 服务，请稍候', progress: 50 });
 
     let appUrl = null;
     try {
-      if (hasSystemDsh) {
+      if (isPluginsEdition) {
+        // Plugins edition: always use bundled dsh (forceBundled in startDsh)
+        sendSplashProgress('正在启动内置 DSH 引擎…', { sub: '插件版使用内置引擎', progress: 55 });
+        appUrl = await bootstrapDsh(false);
+        log.info(`dsh web ready at ${appUrl} (plugins edition, bundled dsh)`);
+      } else if (hasSystemDsh) {
         // 优先用系统 DSH
         sendSplashProgress('正在启动系统 DSH…', { sub: '使用系统已安装版本', progress: 55 });
         appUrl = await bootstrapDsh(true); // preferSystem = true

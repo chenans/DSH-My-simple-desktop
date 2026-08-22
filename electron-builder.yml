@@ -31,9 +31,9 @@ extraResources:
 win:
   icon: assets/icon.png
   # signAndEditExecutable stays off: the winCodeSign toolchain needs admin /
-  # Developer Mode locally. The afterPack hook (rcedit) covers icon + version
-  # metadata the same way, without privileges. Signing is handled separately
-  # via CSC_LINK when a certificate is available.
+  # Developer Mode locally (7z extraction fails on darwin symlinks). The
+  # afterPack hook (rcedit) covers icon + version metadata. Signing is done
+  # post-build via scripts/sign-exe.ps1 (signtool or PowerShell fallback).
   signAndEditExecutable: false
   target:
     - target: nsis

@@ -2,8 +2,10 @@ node_modules/
 release/
 dist/
 dsh/
+plugins-layer/
 .smoke-shots/
 build/rcedit/
+build/certs/
 *.log
 pkg-smoke*.txt
 e-out.txt

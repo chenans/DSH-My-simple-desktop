@@ -330,6 +330,15 @@ function removeEnvDirFromPath(envDir, opts = {}) {
 function checkForUpdates(opts) {
   const { envDir, onProgress } = opts;
 
+  // Offline mode (Plugins edition): skip update check entirely.
+  // The kernel + plugins are a locked set; auto-updating the kernel would
+  // break compatibility with the bundled plugins.
+  if (process.env.DSH_DESKTOP_OFFLINE === '1') {
+    log.info('[runtime-updater] offline mode — skipping update check');
+    if (onProgress) onProgress('skip', '离线模式，跳过更新检查');
+    return;
+  }
+
   setImmediate(async () => {
     try {
       const currentVer = readDeployedVersion(envDir);

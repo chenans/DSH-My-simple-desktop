@@ -30,6 +30,7 @@ const path = require('node:path');
  * @param {string} [ctx.platform] process.platform
  * @param {boolean} [ctx.preferSystem]  if true, system PATH dsh takes priority over all
  * @param {string} [ctx.envDir]  user-level environment dir (e.g. %USERPROFILE%\.dsh-desktop)
+ * @param {boolean} [ctx.forceBundled]  if true, ignore preferSystem and always use bundled/envDir (Plugins edition)
  * @returns {{cmd: string, args: string[], needsShell: boolean} | {cmd: string, needsShell: boolean}}
  */
 function resolveDshCommand({
@@ -39,14 +40,16 @@ function resolveDshCommand({
   platform = process.platform,
   preferSystem = false,
   envDir,
+  forceBundled = false,
 }) {
   // 1. explicit override
   if (env.DSH_DESKTOP_DSH_BIN) {
     return { cmd: env.DSH_DESKTOP_DSH_BIN, needsShell: false };
   }
 
-  // When preferSystem is true, try system PATH first
-  if (preferSystem) {
+  // Plugins edition: never use system dsh (it lacks the bundled plugins).
+  // Skip the preferSystem branch entirely.
+  if (!forceBundled && preferSystem) {
     const sysName = platform === 'win32' ? 'dsh.cmd' : 'dsh';
     return { cmd: sysName, needsShell: platform === 'win32' };
   }

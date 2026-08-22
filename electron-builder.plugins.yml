@@ -1,0 +1,64 @@
+# electron-builder configuration — Win11 (NSIS installer) — PLUGINS edition
+#
+# The Plugins edition ships WITH the bundled dsh runtime (resources/dsh)
+# AND a snapshot of the author's user-level plugins/agent-presets
+# (resources/plugins). It is meant for offline/intranet users who want
+# the author's curated dsh environment out of the box:
+#   - installation is larger (~full + plugin snapshot size)
+#   - the app ALWAYS uses the bundled runtime (never the system dsh)
+#   - the app NEVER checks npm for dsh updates (locked kernel+plugins)
+#   - model configuration (settings.yaml, apiKey, gateway) is NOT bundled
+#     — users configure their own after install
+#   - updates require a new installer from the author
+#
+# Build with:  npm run build:runtime && npm run build:plugin-layer && npm run dist:plugins
+
+appId: com.dsh-my-simple-desktop.app
+productName: DSH My Simple Desktop
+copyright: Copyright © 2025
+
+# afterPack hook embeds the app icon + version metadata into the exe via rcedit
+afterPack: scripts/afterPack.js
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - src/**/*
+  - package.json
+  - assets/**/*
+
+extraResources:
+  # Bundled dsh runtime (same as the full edition)
+  - from: dsh
+    to: dsh
+    filter:
+      - "**/*"
+  # Plugin snapshot layer (built by scripts/build-plugin-layer.ps1)
+  # Contains: manifest.json, cordis.yml, plugin node_modules (diff),
+  # agent-presets. NEVER contains settings.yaml / credentials / sessions.
+  - from: plugins-layer
+    to: plugins
+    filter:
+      - "**/*"
+
+win:
+  icon: assets/icon.png
+  signAndEditExecutable: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: "${productName}-${version}-Plugins-Setup.${ext}"
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: DSH My Simple Desktop
+  runAfterFinish: true
+  installerIcon: assets/icon.ico
+  uninstallerIcon: assets/icon.ico

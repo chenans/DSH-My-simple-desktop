@@ -1,6 +1,31 @@
 # 更新日志
 
 
+## 0.1.17 (2026-08-22)
+
+### 新增
+- **自签名代码签名** — 支持自签名证书签名 exe，消除"未知发布者"警告
+  - 新增 `scripts/create-self-signed-cert.ps1`：生成自签名代码签名证书，导出 .pfx + .cer，自动安装到本机 Trusted Root
+  - 新增 `scripts/sign-exe.ps1`：对已构建的 exe 补签名（支持 signtool.exe 和 PowerShell fallback）
+  - 三个 electron-builder yml 保持 `signAndEditExecutable: false`（winCodeSign 需管理员权限），改用 post-build `sign-exe.ps1` 补签名（SHA256）
+  - `package.json` 新增 `cert:create` 和 `sign` scripts
+  - `.gitignore` 排除 `build/certs/`
+- **插件版安装包** — 在完整版基础上内置作者本地 dsh 插件/presets 快照，供内网/离线团队开箱即用
+  - 新增 `electron-builder.plugins.yml` 打包配置，产物名 `*-Plugins-Setup.exe`
+  - 新增 `scripts/snapshot-plugin-layer.mjs` 快照核心模块：差分 `~/.dsh/profiles/web/node_modules` 与内置 `dsh/node_modules`，仅打包增量包；纳入 `profiles/web/package.json`（含 `dsh.profile.bundles`）；构建期安全扫描敏感文件（api_key/token/secret/password/credential/URL嵌入凭据/长token），发现则构建失败；排除 `.env`/`.local.*`/`.secrets*` 文件；非空断言（0 插件 + 0 presets 时构建失败）
+  - 新增 `scripts/build-plugin-layer.ps1` 交互式编排脚本
+  - 新增 `src/lib/plugin-deployer.js` 首次启动部署逻辑：幂等非破坏性部署到 `~/.dsh/profiles/web/`（node_modules + package.json 非破坏合并 dsh.profile.bundles），部署后写标记文件，用户后续修改不覆盖
+  - `src/lib/dsh-resolve.js` 新增 `forceBundled` 参数，插件版强制使用内置 dsh 运行时
+  - `src/lib/runtime-updater.js` 支持 `DSH_DESKTOP_OFFLINE=1` 跳过更新检查
+  - `src/main.js` 插件版启动流程：检测 `resources/plugins/manifest.json` → 注入离线开关 → 跳过系统 dsh 检测 → 部署插件层 → 启动内置 dsh
+  - 新增 32 个单元测试（dsh-resolve-plugins 4 + plugin-deployer 12 + snapshot-plugin-layer 16），全部通过
+
+### 约束
+- 插件版不打包模型配置/密钥（settings.yaml、.credentials.yaml 等一律排除）
+- 插件版默认离线运行，不联网检查 dsh 内核更新
+- 插件版强制使用内置 dsh，不使用系统已安装的 dsh
+
+
 ## 0.1.7 (2026-08-19)
 
 
