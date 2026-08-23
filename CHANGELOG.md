@@ -1,6 +1,19 @@
 # 更新日志
 
 
+
+## 0.1.18 (2026-08-23)
+
+### 修复
+- **dsh 崩溃恢复逻辑全面修复** — 解决 6 个导致崩溃后无法正常重启的问题：
+  - **崩溃重启不清理残留锁** — 抽取 `cleanupDshLocks()` 独立函数，重启前安全清理 `~/.dsh/task-board/ledger-v2.lock`（仅删 owner PID 已死的锁，不误删活进程锁），避免 dsh 抢不到锁导致崩溃循环
+  - **`bootstrapDsh` 参数传错** — 重启路径误将超时数字当 `preferSystem` 传入，导致 `timeoutMs` 变 undefined。新增模块级变量 `dshPreferSystem` 缓存启动时解析值，重启时复用
+  - **`dshRestarts` 计数器不重置** — 崩溃重启成功后不归零，逐渐耗尽重试预算。现重启成功后立即重置为 0
+  - **`wmic` 已废弃** — Win11 23H2+ 移除 wmic，`killStaleDshProcesses` 静默失败。改用 PowerShell `Get-CimInstance Win32_Process` 替代
+  - **崩溃后不杀残留进程树** — 崩溃 `exit` 事件中重启前调 `killDshTree()` + `cleanupDshLocks()`；`waitForHealthyUrl` 失败后 `killDshTree()` 兜底，避免端口冲突
+  - **渲染进程崩溃只能重载一次** — `rendererReloaded` 置 true 后永不复位。`did-finish-load` 成功后复位为 false，后续崩溃均可自动重载
+
+
 ## 0.1.17 (2026-08-22)
 
 ### 新增

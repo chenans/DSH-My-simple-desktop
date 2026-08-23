@@ -101,6 +101,9 @@ let dshChild = null;
 let isQuitting = false;
 let dshRestarts = 0;
 let dshPort = null;
+// Cached preferSystem flag from initial bootstrap — reused on crash restart
+// so we don't lose the "prefer system dsh" semantic across restarts.
+let dshPreferSystem = false;
 
 // ── splash / boot progress ──────────────────────────────────────────────────
 
@@ -288,26 +291,35 @@ function cleanProfilesNodeModules() {
  * survive and hold locks (e.g. task-board ledger), causing the next launch
  * to fail with "ledger is already owned by process XXXX".
  *
- * On Windows we use wmic to find node processes whose command line contains
- * "dsh" and kill their entire process tree.
+ * On Windows we use PowerShell Get-CimInstance to find node processes whose
+ * command line contains "dsh" and kill their entire process tree.
+ * (wmic is removed on Win11 23H2+, so we can't rely on it.)
  */
 function killStaleDshProcesses() {
   if (process.platform !== 'win32') return;
   const { execSync } = require('node:child_process');
 
   // Step 1: Kill stale node processes running dsh (best effort)
+  // Use PowerShell Get-CimInstance instead of wmic (removed on Win11 23H2+).
   try {
+    const psScript =
+      "Get-CimInstance Win32_Process -Filter \"name='node.exe'\" | " +
+      "Select-Object ProcessId,CommandLine | ConvertTo-Csv -NoTypeInformation";
     const out = execSync(
-      'wmic process where "name=\'node.exe\'" get ProcessId,CommandLine /format:csv',
-      { encoding: 'utf-8', timeout: 8000, windowsHide: true },
+      `powershell -NoProfile -NonInteractive -Command "${psScript.replace(/"/g, '\\"')}"`,
+      { encoding: 'utf-8', timeout: 10000, windowsHide: true },
     );
     const lines = out.split('\n').filter(l => l.trim());
     let killed = 0;
     for (const line of lines) {
-      if (line.toLowerCase().includes('processid') || line.toLowerCase().includes('commandline')) continue;
-      const parts = line.split(',');
-      const pid = parts[parts.length - 1].trim();
-      const cmdLine = parts.slice(0, -1).join(',').toLowerCase();
+      // CSV from ConvertTo-Csv: "ProcessId","CommandLine" or "123","some cmd"
+      // Skip header row
+      if (line.toLowerCase().includes('processid') && line.toLowerCase().includes('commandline')) continue;
+      // Parse CSV — values are quoted, comma-separated
+      const matches = line.match(/"([^"]*)"/g);
+      if (!matches || matches.length < 2) continue;
+      const cmdLine = (matches[0] || '').replace(/"/g, '').toLowerCase();
+      const pid = (matches[1] || '').replace(/"/g, '').trim();
       if (!pid || pid === '0') continue;
       if (cmdLine.includes('dsh') && !cmdLine.includes('dsh-my-simple-desktop') && !cmdLine.includes('electron')) {
         try {
@@ -317,7 +329,7 @@ function killStaleDshProcesses() {
           log.info(`killStaleDshProcesses: killed stale dsh pid ${pid}`);
           killed++;
         } catch (err) {
-          log.warn(`killStaleDshProcesses: failed to kill pid ${pid}: ${err.message}`);
+          log.error(`killStaleDshProcesses: failed to kill pid ${pid}: ${err.message}`);
         }
       }
     }
@@ -325,56 +337,72 @@ function killStaleDshProcesses() {
       log.info(`killStaleDshProcesses: killed ${killed} stale dsh process(es)`);
     }
   } catch (err) {
-    log.warn(`killStaleDshProcesses: wmic query failed: ${err.message}`);
+    log.error(`killStaleDshProcesses: PowerShell process query failed: ${err.message}`);
   }
 
-  // Step 2: Remove stale task-board lock file if the owning process is dead
-  // The lock file is at ~/.dsh/task-board/ledger-v2.lock and contains the PID
-  // of the process that holds it. If that process is no longer alive, the lock
-  // is stale and must be removed or dsh will crash with "ledger is already
-  // owned by process XXXX".
+  // Step 2: Remove stale task-board lock file
+  cleanupDshLocks();
+}
+
+/**
+ * Remove stale task-board lock file if the owning process is dead.
+ *
+ * The lock file is at ~/.dsh/task-board/ledger-v2.lock and contains the PID
+ * of the process that holds it. If that process is no longer alive, the lock
+ * is stale and must be removed or dsh will crash with "ledger is already
+ * owned by process XXXX".
+ *
+ * This is split out from killStaleDshProcesses so it can be called
+ * independently on the crash-restart path (before each restart spawn).
+ *
+ * Safety: only removes the lock if the owner PID is dead OR is the current
+ * process. Never removes a lock held by a live *different* process (which
+ * would be a legitimate concurrent dsh instance).
+ */
+function cleanupDshLocks() {
   try {
     const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
     const lockFile = path.join(dshHome, 'task-board', 'ledger-v2.lock');
-    if (fs.existsSync(lockFile)) {
-      let ownerPid = null;
+    if (!fs.existsSync(lockFile)) return;
+
+    let ownerPid = null;
+    try {
+      const content = fs.readFileSync(lockFile, 'utf-8');
+      const parsed = JSON.parse(content);
+      if (typeof parsed.pid === 'number') ownerPid = parsed.pid;
+    } catch {
+      // Lock file is corrupt — just delete it
+    }
+
+    let shouldRemove = true;
+    if (ownerPid && ownerPid !== process.pid) {
+      // Check if the owner process is still alive
       try {
-        const content = fs.readFileSync(lockFile, 'utf-8');
-        const parsed = JSON.parse(content);
-        if (typeof parsed.pid === 'number') ownerPid = parsed.pid;
+        const { execSync } = require('node:child_process');
+        const out = execSync(`tasklist /FI "PID eq ${ownerPid}" /NH /FO CSV`, {
+          encoding: 'utf-8', timeout: 3000, windowsHide: true,
+        });
+        // If tasklist output contains the PID, the process is alive.
+        // A live lock owned by a *different* process is legitimate — skip.
+        if (out.includes(String(ownerPid))) {
+          shouldRemove = false;
+          log.info(`cleanupDshLocks: lock owner pid ${ownerPid} is alive, not removing`);
+        }
       } catch {
-        // Lock file is corrupt — just delete it
+        // tasklist failed — process is likely dead, safe to remove
       }
+    }
 
-      let shouldRemove = true;
-      if (ownerPid && ownerPid !== process.pid) {
-        // Check if the owner process is still alive
-        try {
-          execSync(`tasklist /FI "PID eq ${ownerPid}" /NH /FO CSV`, {
-            encoding: 'utf-8', timeout: 3000, windowsHide: true,
-          });
-          // If tasklist succeeds and output contains the PID, process is alive
-          // But we already tried to kill stale dsh processes above, so if it's
-          // still alive it might be a legitimate instance. However, since we're
-          // about to start a new dsh, any existing lock is stale by definition.
-          // Only skip removal if the process is NOT a dsh process.
-          // For safety, just remove the lock — we killed all stale dsh above.
-        } catch {
-          // tasklist failed — process is likely dead, safe to remove
-        }
-      }
-
-      if (shouldRemove) {
-        try {
-          fs.unlinkSync(lockFile);
-          log.info(`killStaleDshProcesses: removed stale lock file ${lockFile} (owner pid: ${ownerPid})`);
-        } catch (err) {
-          log.warn(`killStaleDshProcesses: could not remove lock file: ${err.message}`);
-        }
+    if (shouldRemove) {
+      try {
+        fs.unlinkSync(lockFile);
+        log.info(`cleanupDshLocks: removed stale lock file ${lockFile} (owner pid: ${ownerPid})`);
+      } catch (err) {
+        log.error(`cleanupDshLocks: could not remove lock file: ${err.message}`);
       }
     }
   } catch (err) {
-    log.warn(`killStaleDshProcesses: lock file cleanup failed: ${err.message}`);
+    log.error(`cleanupDshLocks: lock file cleanup failed: ${err.message}`);
   }
 }
 
@@ -575,9 +603,8 @@ function startDsh(port, preferSystem) {
     }
 
     // Crash: restart with backoff (1s, 2s, 4s, 8s, 16s → give up).
-    // 首次启动超时时间更长，后续重启用较短超时
-    const isFirstBoot = !mainWindow;
-    const startupTimeout = isFirstBoot ? DSH_STARTUP_TIMEOUT_MS : DSH_RESTART_TIMEOUT_MS;
+    // preferSystem is reused from the initial bootstrap (dshPreferSystem),
+    // and the restart timeout is DSH_RESTART_TIMEOUT_MS.
 
     if (dshRestarts < DSH_MAX_RESTARTS) {
       dshRestarts += 1;
@@ -596,8 +623,22 @@ function startDsh(port, preferSystem) {
       }
       setTimeout(() => {
         if (isQuitting) return;
-        bootstrapDsh(startupTimeout).catch((err) => {
+        // Before restarting: clean up stale locks and kill any surviving
+        // dsh process tree from the crashed instance. Without this, the
+        // new dsh will fail to acquire the task-board ledger lock and
+        // crash again, entering a restart loop.
+        cleanupDshLocks();
+        killDshTree();
+        bootstrapDsh(dshPreferSystem, DSH_RESTART_TIMEOUT_MS).then(() => {
+          // Restart succeeded — reset the crash counter so the next
+          // crash starts from 1/5 again, not accumulating.
+          dshRestarts = 0;
+          log.info('dsh restart succeeded; dshRestarts reset to 0');
+        }).catch((err) => {
           log.error('dsh restart failed', err);
+          // Kill any orphan processes from the failed restart attempt
+          // to avoid port conflicts on the next retry.
+          killDshTree();
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('app:event', {
               type: 'dsh-fatal',
@@ -623,6 +664,9 @@ function startDsh(port, preferSystem) {
 
 /** Pick a free port, spawn dsh, wait for readiness. Returns the URL. */
 async function bootstrapDsh(preferSystem, timeoutMs) {
+  // Cache preferSystem so crash-restart can reuse the same value without
+  // re-detecting (and without the caller having to pass it every time).
+  dshPreferSystem = preferSystem === true;
   const port = await findFreePort(DEFAULT_PORT, PORT_SCAN_LIMIT);
   if (port === null) {
     throw new Error(
@@ -813,6 +857,9 @@ function createMainWindow(url) {
   // Inject a floating "📖 教程" button into the dsh SPA once it finishes loading.
   // The preload script exposes dshDesktop.app.openGuide() to the page.
   mainWindow.webContents.on('did-finish-load', () => {
+    // Reset the renderer-crash reload flag so a second crash can also be
+    // auto-reloaded (previously it was a one-shot that never reset).
+    rendererReloaded = false;
     mainWindow.webContents.executeJavaScript(`
       (function() {
         // Avoid duplicate injection on reload
