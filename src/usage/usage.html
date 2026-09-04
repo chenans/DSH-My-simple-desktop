@@ -24,55 +24,7 @@
   body {
     margin: 0; background: var(--bg); color: var(--fg);
     font: 14px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif;
-    padding: 0;
   }
-
-  /* Custom title bar */
-  .titlebar {
-    display: flex; align-items: center;
-    height: 32px; padding: 0 12px;
-    background: var(--bg); border-bottom: 1px solid var(--border);
-    -webkit-app-region: drag;
-    user-select: none;
-  }
-  .titlebar-logo {
-    display: flex; align-items: center; gap: 8px;
-    font-size: 14px; font-weight: 600;
-    margin-right: 20px;
-  }
-  .titlebar-logo svg { width: 20px; height: 20px; }
-  .titlebar-menu {
-    display: flex; gap: 0;
-    -webkit-app-region: no-drag;
-  }
-  .titlebar-menu-item {
-    padding: 4px 12px;
-    font-size: 13px;
-    cursor: pointer;
-    border-radius: 4px;
-    -webkit-app-region: no-drag;
-  }
-  .titlebar-menu-item:hover {
-    background: var(--card);
-  }
-  .titlebar-spacer {
-    flex: 1;
-    -webkit-app-region: no-drag;
-  }
-  .titlebar-controls {
-    display: flex; gap: 0;
-    -webkit-app-region: no-drag;
-  }
-  .titlebar-btn {
-    width: 46px; height: 32px;
-    display: flex; align-items: center; justify-content: center;
-    cursor: pointer;
-    transition: background 0.1s;
-  }
-  .titlebar-btn:hover { background: var(--card); }
-  .titlebar-btn.close:hover { background: #c42b1c; }
-  .titlebar-btn.close:hover svg { fill: #fff; }
-  .titlebar-btn svg { width: 10px; height: 10px; fill: var(--fg); }
 
   /* Content area */
   .content-area {
@@ -151,32 +103,6 @@ td.path { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-spa
 </style>
 </head>
 <body>
-  <!-- Custom title bar -->
-  <div class="titlebar">
-    <div class="titlebar-logo">
-      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2L2 7l10 5 10-5-10-5zm0 9l2.5-1.25L12 8.5l-2.5 1.25L12 11zm0 2.5l-5-2.5-5 2.5L12 22l10-8.5-5-2.5-5 2.5z"/></svg>
-      <span>DSH Desktop</span>
-    </div>
-    <div class="titlebar-menu">
-      <div class="titlebar-menu-item" onclick="alert('文件菜单')">文件</div>
-      <div class="titlebar-menu-item" onclick="alert('编辑菜单')">编辑</div>
-      <div class="titlebar-menu-item" onclick="alert('视图菜单')">视图</div>
-      <div class="titlebar-menu-item" onclick="alert('帮助菜单')">帮助</div>
-    </div>
-    <div class="titlebar-spacer"></div>
-    <div class="titlebar-controls">
-      <div class="titlebar-btn" onclick="window.require('electron').ipcRenderer.send('window:minimize')">
-        <svg viewBox="0 0 10 1"><rect width="10" height="1"/></svg>
-      </div>
-      <div class="titlebar-btn" onclick="window.require('electron').ipcRenderer.send('window:maximize')">
-        <svg viewBox="0 0 10 10"><rect width="10" height="10" fill="none" stroke="currentColor" stroke-width="1"/></svg>
-      </div>
-      <div class="titlebar-btn close" onclick="window.require('electron').ipcRenderer.send('window:close')">
-        <svg viewBox="0 0 10 10"><path d="M1 1L9 9M9 1L1 9" stroke="currentColor" stroke-width="1.2"/></svg>
-      </div>
-    </div>
-  </div>
-
   <!-- Main content -->
   <div class="content-area">
     <h1>用量统计</h1>

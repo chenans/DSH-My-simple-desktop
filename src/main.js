@@ -1274,6 +1274,7 @@ function buildTrayMenu() {
 function createTray() {
   tray = new Tray(TRAY_ICON_PATH);
   tray.setToolTip(APP_NAME);
+  tray.setContextMenu(buildTrayMenu());
   tray.on('click', () => tray.popUpContextMenu(buildTrayMenu()));
   tray.on('double-click', () => showMainWindow());
 }
@@ -1409,7 +1410,7 @@ function openUsageWindow() {
     minHeight: 500,
     title: '用量统计 — ' + APP_NAME,
     icon: ICON_PATH,
-    frame: true,
+    autoHideMenuBar: true,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1f1f1f' : '#ffffff',
     show: false,
     webPreferences: {
