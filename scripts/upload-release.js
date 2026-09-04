@@ -15,8 +15,8 @@ const path = require('path');
 const https = require('https');
 
 const REPO = 'chenans/DSH-My-simple-desktop';
-const TAG = 'v0.1.18';
-const VERSION = '0.1.18';
+const TAG = 'v0.1.19';
+const VERSION = '0.1.19';
 
 // --- Get token from git credential helper ---
 function getToken() {
@@ -142,24 +142,26 @@ async function main() {
     // 3. Create release
     console.log();
     console.log('[3/4] Creating new release...');
-    const releaseBody = `## v${VERSION} — dsh 崩溃恢复全面修复
+    const releaseBody = `## v${VERSION} — 简化插件重启 + F5 手动刷新 + GPU 节流
 
-### 修复（6 个崩溃恢复问题）
+### 改进
 
-- **崩溃重启不清理残留锁** — 抽取 \`cleanupDshLocks()\` 独立函数，重启前安全清理 \`~/.dsh/task-board/ledger-v2.lock\`（仅删 owner PID 已死的锁），避免 dsh 抢不到锁导致崩溃循环
-- **\`bootstrapDsh\` 参数传错** — 重启路径误将超时数字当 \`preferSystem\` 传入。新增模块级变量 \`dshPreferSystem\` 缓存启动时解析值，重启时复用
-- **\`dshRestarts\` 计数器不重置** — 崩溃重启成功后不归零，逐渐耗尽重试预算。现重启成功后立即重置为 0
-- **\`wmic\` 已废弃** — Win11 23H2+ 移除 wmic，\`killStaleDshProcesses\` 静默失败。改用 PowerShell \`Get-CimInstance Win32_Process\` 替代
-- **崩溃后不杀残留进程树** — 重启前调 \`killDshTree()\` + \`cleanupDshLocks()\`；\`waitForHealthyUrl\` 失败后 \`killDshTree()\` 兜底
-- **渲染进程崩溃只能重载一次** — \`rendererReloaded\` 置 true 后永不复位。\`did-finish-load\` 成功后复位为 false
+- **简化插件重启机制** — 去掉 \`waitForHealthyUrl\` 60s 端口轮询，dsh 正常退出后延迟 3s \`reload()\` 一次，没起来按 F5 手动刷新
+- **F5 / Ctrl+R 手动刷新** — 拦截 \`before-input-event\`，用户可在手动启动 dsh 后按 F5 刷新页面
+- **GPU 节流** — 打包版启用 \`disable-gpu\` 单开关，省 ~150MB 内存，软件渲染仍可跑 CSS 动画
+- **崩溃恢复路径不变** — \`app.relaunch()\` + 上限 3 次重试，60s 稳定后重置计数器
+
+### 测试
+
+- 40/40 通过（plan-b-restart 8 个、relaunch-logic、pre-clean-lock 5 个）
 
 ### 下载
 
 | 版本 | 文件 | 大小 | 适用人群 |
 |------|------|------|---------|
-| 完整版 | \`DSH.My.Simple.Desktop-${VERSION}-Setup.exe\` | 151.8 MB | 没装 dsh / 离线环境，开箱即用 |
-| 精简版 | \`DSH.My.Simple.Desktop-${VERSION}-Lite-Setup.exe\` | 81.5 MB | 本地已装 dsh 的用户 |
-| 插件版 | \`DSH.My.Simple.Desktop-${VERSION}-Plugins-Setup.exe\` | 278.3 MB | 内网/离线团队分发，内置插件快照 |
+| 完整版 | \`DSH.My.Simple.Desktop-${VERSION}-Setup.exe\` | ~152 MB | 没装 dsh / 离线环境，开箱即用 |
+| 精简版 | \`DSH.My.Simple.Desktop-${VERSION}-Lite-Setup.exe\` | ~81 MB | 本地已装 dsh 的用户 |
+| 插件版 | \`DSH.My.Simple.Desktop-${VERSION}-Plugins-Setup.exe\` | ~278 MB | 内网/离线团队分发，内置插件快照 |
 
 ### 安装说明
 
@@ -171,7 +173,7 @@ async function main() {
 
     const createResp = await apiCall('POST', 'releases', {
       tag_name: TAG,
-      name: `v${VERSION} — dsh 崩溃恢复全面修复`,
+      name: `v${VERSION} — 简化插件重启 + F5 手动刷新 + GPU 节流`,
       body: releaseBody,
       draft: false,
       prerelease: false,
