@@ -15,7 +15,14 @@ const os = require('os');
 
 const REPO_OWNER = 'chenans';
 const REPO_NAME = 'DSH-My-simple-desktop';
-const CURRENT_VERSION = process.env.npm_package_version || '0.0.0';
+let CURRENT_VERSION = '0.0.0';
+
+try {
+  const { app } = require('electron');
+  CURRENT_VERSION = app.getVersion() || process.env.npm_package_version || '0.0.0';
+} catch {
+  CURRENT_VERSION = process.env.npm_package_version || '0.0.0';
+}
 
 /**
  * Simple semver comparison.

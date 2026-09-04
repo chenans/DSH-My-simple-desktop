@@ -1393,6 +1393,131 @@ function handleCliArgs(argv) {
 }
 
 // ---------------------------------------------------------------------------
+// Auto update check (GitHub Release)
+// ---------------------------------------------------------------------------
+
+let _lastNotifiedVersion = null;
+let _autoUpdateTimer = null;
+
+/**
+ * Show a native notification in the bottom-right corner.
+ * On click, triggers the download flow.
+ */
+function showUpdateNotification(latestVersion, downloadUrl, assetName) {
+  if (!Notification.isSupported()) {
+    // Fallback: flash tray + set tooltip
+    if (tray && !tray.isDestroyed()) {
+      tray.setToolTip(`${APP_NAME} — 发现新版本 v${latestVersion}`);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.flashFrame(true);
+      }
+    }
+    return;
+  }
+
+  const notif = new Notification({
+    title: `发现新版本 v${latestVersion}`,
+    body: `点击下载更新（当前版本 ${updateChecker.CURRENT_VERSION}）`,
+    silent: false,
+  });
+
+  notif.on('click', () => {
+    notif.close();
+    promptDownloadUpdate(latestVersion, downloadUrl, assetName);
+  });
+
+  notif.show();
+}
+
+/**
+ * Prompt user to download and install the update.
+ * Reuses the same flow as the menu "检查更新" action.
+ */
+async function promptDownloadUpdate(latestVersion, downloadUrl, assetName) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    // If window is hidden, show it first
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  }
+
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'question',
+    title: `发现新版本 v${latestVersion}`,
+    message: `发现新版本 v${latestVersion}，当前版本 ${updateChecker.CURRENT_VERSION}。\n是否立即下载更新？`,
+    buttons: ['下载', '稍后'],
+    defaultId: 0,
+  });
+
+  if (response !== 0 || !downloadUrl) return;
+
+  dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    title: '正在下载更新',
+    message: '下载将在后台进行，完成后会提示您重启安装。',
+    buttons: ['确定'],
+  });
+
+  try {
+    const { destPath } = await updateChecker.downloadInstaller(downloadUrl, (done, total) => {
+      const progress = total > 0 ? Math.round((done / total) * 100) : 0;
+      mainWindow?.webContents.send('updater:progress', progress);
+    });
+
+    const { response: resp2 } = await dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: '更新已下载',
+      message: `安装包已下载完成。\n点击"确定"退出并安装，点击"稍后"下次启动时安装。`,
+      buttons: ['确定', '稍后'],
+      defaultId: 0,
+    });
+
+    if (resp2 === 0) {
+      const { spawn } = require('child_process');
+      spawn(destPath, ['--silent'], { detached: true, stdio: 'ignore' }).unref();
+      isQuitting = true;
+      app.quit();
+    }
+  } catch (e) {
+    dialog.showMessageBox(mainWindow, {
+      type: 'error',
+      title: '下载失败',
+      message: String(e.message || e),
+    });
+  }
+}
+
+/**
+ * Auto check for updates on startup + periodic poll.
+ * - First check: 30s after startup
+ * - Periodic: every 4 hours
+ * - Only notifies once per version (avoids repeated notifications)
+ */
+function autoCheckUpdate() {
+  if (!settings.get('checkUpdatesOnStart', true)) return;
+
+  const doCheck = async () => {
+    try {
+      const result = await updateChecker.checkForUpdate();
+      if (result.hasUpdate && result.downloadUrl && result.latestVersion !== _lastNotifiedVersion) {
+        _lastNotifiedVersion = result.latestVersion;
+        log.info(`[auto-update] new version found: v${result.latestVersion}`);
+        showUpdateNotification(result.latestVersion, result.downloadUrl, result.assetName);
+      }
+    } catch (e) {
+      log.warn('[auto-update] check failed: ' + (e.message || e));
+    }
+  };
+
+  // First check after 30s
+  setTimeout(doCheck, 30_000);
+
+  // Periodic check every 4 hours
+  _autoUpdateTimer = setInterval(doCheck, 4 * 60 * 60 * 1000);
+}
+
+// ---------------------------------------------------------------------------
 // IPC
 // ---------------------------------------------------------------------------
 
@@ -1843,6 +1968,12 @@ if (!gotLock) {
     if (settings.get('checkUpdatesOnStart', true)) {
       setTimeout(() => updater.check(), 30_000);
     }
+
+    // ── GitHub Release auto-update check ───────────────────────────────
+    // Check on startup (delayed) + periodic poll every 4 hours.
+    // Shows a native notification in the bottom-right corner when a new
+    // version is found. User can click the notification to download.
+    autoCheckUpdate();
 
     // Background check for dsh environment updates (non-blocking)
     runtimeUpdater.checkForUpdates({ envDir: dshEnvDir() });
