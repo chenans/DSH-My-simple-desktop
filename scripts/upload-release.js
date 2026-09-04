@@ -15,8 +15,8 @@ const path = require('path');
 const https = require('https');
 
 const REPO = 'chenans/DSH-My-simple-desktop';
-const TAG = 'v0.1.30';
-const VERSION = '0.1.30';
+const TAG = 'v0.1.34';
+const VERSION = '0.1.34';
 
 // --- Get token from git credential helper ---
 function getToken() {
@@ -142,26 +142,12 @@ async function main() {
     // 3. Create release
     console.log();
     console.log('[3/4] Creating new release...');
-    const releaseBody = `## v${VERSION} — 用量统计 + 关闭行为设置 + 菜单栏优化
+    const releaseBody = `## v${VERSION} — 用量统计图表与缓存写入修复
 
-### 新增
+### 修复
 
-- **用量统计** — 菜单栏"帮助 → 用量统计"，按天/周/月/年/自动统计：
-  - 总会话数、总交互轮次、总操作步数
-  - Token 使用量（输入/输出/缓存读取/缓存写入）
-  - 按时间分布的柱状图
-  - 按项目统计的详细表格（会话数、交互数、Token、平均耗时、最后使用时间）
-  - 模型/Provider 余额信息
-  - 支持时间范围筛选（7天/30天/90天/1年/全部）
-
-- **关闭行为设置** — 设置窗口中将"关闭窗口时最小化到托盘"改为下拉选择框，可选"直接退出"或"隐藏到托盘"，更直观
-
-- **菜单栏** — 按 \`Alt\` 键显示菜单栏，包含文件/编辑/视图/帮助四个菜单
-  - 帮助菜单包含：检查更新、用量统计、模型配置教程、关于
-
-### 优化
-
-- **去掉浮动教程按钮** — 教程入口从页面右下角浮动按钮移到菜单栏"帮助 → 模型配置教程"，界面更简洁
+- **按时间分布图折线与柱状不一致** — 折线此前选用"会话数"（每时段仅 0~2 个），与柱状图的 Token 消耗趋势相反，看起来两套数据对不上。改为优先叠加"调用次数"（与 Token 消耗直接正相关），仅当无调用数据时回退为会话数
+- **"缓存写入"一直显示 0** — 数据源（usage-ledger 与会话记录）本身未记录缓存写入量（API 计费仅区分 cache hit/miss）。不再用误导性的 0 展示：总计卡片与模型/Provider 明细表显示"未记录"并附悬停说明
 
 ### 下载
 
@@ -176,13 +162,13 @@ async function main() {
 1. 下载对应版本的 Setup.exe
 2. 双击运行安装（如提示 SmartScreen，点击"仍要运行"）
 3. 安装完成后从开始菜单启动"DSH My Simple Desktop"
-4. **按 \`Alt\` 键**显示菜单栏，访问"帮助"菜单使用检查更新、用量统计、模型配置教程等功能
+4. 按 \`Alt\` 键显示菜单栏，访问"帮助"菜单使用检查更新、用量统计、模型配置教程等功能
 
 > 完整版和插件版首次启动会自动部署 dsh 运行时到 \`%USERPROFILE%\\.dsh-desktop\`，请耐心等待进度条完成。`;
 
     const createResp = await apiCall('POST', 'releases', {
       tag_name: TAG,
-      name: `v${VERSION} — 修复自动更新下载错误`,
+      name: `v${VERSION} — 用量统计图表与缓存写入修复`,
       body: releaseBody,
       draft: false,
       prerelease: false,

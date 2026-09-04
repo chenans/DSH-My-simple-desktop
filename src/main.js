@@ -1369,6 +1369,7 @@ function openUsageWindow() {
     title: '用量统计 — ' + APP_NAME,
     icon: ICON_PATH,
     autoHideMenuBar: true,
+    frame: false,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1f1f1f' : '#ffffff',
     show: false,
     webPreferences: {

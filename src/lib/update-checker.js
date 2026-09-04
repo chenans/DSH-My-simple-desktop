@@ -8,6 +8,7 @@
  * - Returns { hasUpdate, latestVersion, downloadUrl, releaseNotes, error }
  */
 
+const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
@@ -91,102 +92,183 @@ function fetchLatestRelease() {
 }
 
 /**
- * Find the best installer asset for Windows x64.
+ * Detect which edition the currently running app is, so an update downloads
+ * a matching installer (Lite users get the ~81MB Lite installer, not the
+ * 278MB Plugins bundle).
+ * @returns {'full' | 'plugins' | 'lite' | null} null when undetectable (dev/CI)
+ */
+function detectCurrentEdition() {
+  try {
+    const { app } = require('electron');
+    if (!app.isPackaged) return null; // dev mode — fall back to full preference
+    const resourcesPath = process.resourcesPath;
+    if (!resourcesPath) return null;
+    const fs2 = require('fs');
+    const path2 = require('path');
+    // Plugins edition bundles both the runtime and the plugin snapshot.
+    if (fs2.existsSync(path2.join(resourcesPath, 'plugins', 'manifest.json'))) {
+      return 'plugins';
+    }
+    // Full edition bundles the dsh runtime.
+    if (fs2.existsSync(path2.join(resourcesPath, 'dsh', 'node.exe'))) {
+      return 'full';
+    }
+    // Nothing bundled → Lite edition.
+    return 'lite';
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Find the installer asset that best matches the current edition.
+ * When the running edition is known (detectCurrentEdition), the matching
+ * installer wins (Lite → *-Lite-Setup.exe, Plugins → *-Plugins-Setup.exe,
+ * Full → *-Setup.exe). Otherwise the priority is full > plugins > lite.
  * @param {Array<{name, browser_download_url}>} assets
+ * @param {string|null} [currentEdition]
  * @returns {{name: string, url: string} | null}
  */
-function findBestAsset(assets) {
-  // Prefer: *-Setup.exe (full), then *-Lite-Setup.exe
-  const sorted = assets
-    .filter(a => a.name.endsWith('.exe') && !a.name.includes('Portable'))
-    .sort((a, b) => {
-      if (a.name.includes('-Lite-')) return 1;
-      if (b.name.includes('-Lite-')) return -1;
-      return 0;
-    });
+function findBestAsset(assets, currentEdition = null) {
+  const exes = assets
+    .filter((a) => a.name.endsWith('.exe') && !a.name.includes('Portable'))
+    .map((a) => {
+      const isLite = a.name.includes('-Lite-');
+      const isPlugins = a.name.includes('-Plugins-');
+      let score;
+      if (currentEdition === 'lite') {
+        score = isLite ? 3 : (isPlugins ? 1 : 2);
+      } else if (currentEdition === 'plugins') {
+        score = isPlugins ? 3 : (isLite ? 1 : 2);
+      } else if (currentEdition === 'full') {
+        score = isLite ? 1 : (isPlugins ? 2 : 3);
+      } else {
+        // unknown edition → full preferred, then plugins, then lite
+        score = isLite ? 0 : (isPlugins ? 1 : 2);
+      }
+      return { a, score };
+    })
+    .sort((x, y) => y.score - x.score || x.a.name.localeCompare(y.a.name));
 
-  if (sorted.length === 0) return null;
+  if (exes.length === 0) return null;
+  const best = exes[0].a;
   return {
-    name: sorted[0].name,
-    url: sorted[0].browser_download_url,
+    name: best.name,
+    url: best.browser_download_url,
   };
 }
 
 /**
  * Download file to destPath with progress callback.
+ * Supports resume: when opts.start > 0 the request carries a Range header
+ * and appends to the existing partial file. Redirects (301/302/307) are
+ * followed with the same headers.
  * @param {string} url
  * @param {string} destPath
  * @param {(progress: number, total: number) => void} onProgress
+ * @param {object} [opts] - { start=0, timeoutMs=300000 }
  */
-function downloadFile(url, destPath, onProgress) {
+function downloadFile(url, destPath, onProgress, opts = {}) {
+  const start = opts.start || 0;
+  const timeoutMs = opts.timeoutMs || 300000;
   return new Promise((resolve, reject) => {
-    const file = fs.createWriteStream(destPath);
+    let file = null;
     let downloaded = 0;
     let total = 0;
+    let finalUrl = url;
 
-    const req = https.get(url, { timeout: 120000 }, (res) => {
-      // Handle 302 redirect
-      if (res.statusCode === 302 || res.statusCode === 301) {
-        const redirectUrl = res.headers.location;
-        if (!redirectUrl) {
-          file.close();
-          fs.unlinkSync(destPath);
-          return reject(new Error(`Redirect failed: ${res.statusCode}`));
-        }
-        // Follow redirect
-        return https.get(redirectUrl, { timeout: 120000 }, (res2) => {
-          if (res2.statusCode !== 200) {
-            file.close();
-            fs.unlinkSync(destPath);
-            return reject(new Error(`Download failed: ${res2.statusCode}`));
+    const requestHeaders = { 'User-Agent': 'DSH-My-Simple-Desktop' };
+    if (start > 0) requestHeaders['Range'] = `bytes=${start}-`;
+
+    /**
+     * Fail the download: close the file stream (waiting for the OS to
+     * actually release the handle on Windows) before rejecting, so a quick
+     * retry can immediately reopen the same partial file without EBUSY.
+     */
+    const failDownload = (err) => {
+      const finish = () => reject(err);
+      if (!file) return finish();
+      let done = false;
+      const onClose = () => { if (!done) { done = true; finish(); } };
+      file.once('close', onClose);
+      try { file.destroy(); } catch { onClose(); }
+      // Safety net: never hang on a stream that refuses to close.
+      setTimeout(onClose, 2000).unref();
+    };
+
+    /**
+     * Follow redirects, then stream the final response into the file.
+     * The file is only created once we know the final status code, so a
+     * server that ignores Range (returns 200 instead of 206) restarts the
+     * download from scratch instead of corrupting the partial file.
+     */
+    const doGet = (targetUrl, depth) => new Promise((resolveGet, rejectGet) => {
+      if (depth > 5) return rejectGet(new Error('Too many redirects'));
+      const client = targetUrl.startsWith('https:') ? https : http;
+      const req = client.get(targetUrl, { timeout: timeoutMs, headers: requestHeaders }, (res) => {
+        // Handle redirect (GitHub release downloads 302 to the CDN)
+        if (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307) {
+          const redirectUrl = res.headers.location;
+          if (!redirectUrl) {
+            res.resume();
+            return rejectGet(new Error(`Redirect failed: ${res.statusCode}`));
           }
-          total = parseInt(res2.headers['content-length'], 10) || 0;
-          res2.on('data', (chunk) => {
-            downloaded += chunk.length;
-            if (total > 0 && onProgress) onProgress(downloaded, total);
-          });
-          res2.pipe(file);
-          file.on('finish', () => {
-            file.close();
-            resolve();
-          });
-        }).on('error', (e) => {
-          file.close();
-          try { fs.unlinkSync(destPath); } catch {}
-          reject(e);
+          res.resume();
+          return resolveGet(doGet(new URL(redirectUrl, targetUrl).href, depth + 1));
+        }
+
+        const isPartial = res.statusCode === 206;
+        if (res.statusCode !== 200 && !isPartial) {
+          res.resume();
+          return rejectGet(new Error(`Download failed: ${res.statusCode}`));
+        }
+
+        // Decide once whether this response really resumes the partial file.
+        if (!file) {
+          const resumeOk = start > 0 && isPartial;
+          const writeStart = resumeOk ? start : 0;
+          file = fs.createWriteStream(destPath, { flags: resumeOk ? 'a' : 'w' });
+          downloaded = writeStart;
+          total = writeStart;
+          finalUrl = targetUrl;
+        }
+
+        const len = parseInt(res.headers['content-length'], 10);
+        if (!Number.isNaN(len)) {
+          total = downloaded + len;
+        }
+        res.on('data', (chunk) => {
+          downloaded += chunk.length;
+          if (onProgress) onProgress(downloaded, total);
         });
-      }
-
-      if (res.statusCode !== 200) {
-        file.close();
-        fs.unlinkSync(destPath);
-        return reject(new Error(`Download failed: ${res.statusCode}`));
-      }
-
-      total = parseInt(res.headers['content-length'], 10) || 0;
-      res.on('data', (chunk) => {
-        downloaded += chunk.length;
-        if (total > 0 && onProgress) onProgress(downloaded, total);
+        res.on('error', (e) => failDownload(e));
+        res.pipe(file);
+        file.on('finish', () => resolveGet(true));
+        file.on('error', (e) => failDownload(e));
       });
+      req.on('error', (e) => failDownload(e));
+      req.on('timeout', () => {
+        req.destroy();
+        failDownload(new Error('Download timeout'));
+      });
+    });
 
-      res.pipe(file);
-      file.on('finish', () => {
+    doGet(url, 0)
+      .then(() => {
         file.close();
+        // Verify the downloaded size matches Content-Length when known
+        if (total > 0) {
+          const actual = fs.existsSync(destPath) ? fs.statSync(destPath).size : 0;
+          if (actual !== total) {
+            return failDownload(new Error(`Download incomplete: ${actual}/${total} bytes`));
+          }
+        }
         resolve();
+      })
+      .catch((e) => {
+        // Keep the partial file so the caller can resume from it.
+        failDownload(e);
       });
-    });
-
-    req.on('error', (e) => {
-      file.close();
-      try { fs.unlinkSync(destPath); } catch {}
-      reject(e);
-    });
-    req.on('timeout', () => {
-      req.destroy();
-      file.close();
-      try { fs.unlinkSync(destPath); } catch {}
-      reject(new Error('Download timeout'));
-    });
   });
 }
 
@@ -210,7 +292,7 @@ async function checkForUpdate() {
       };
     }
 
-    const asset = findBestAsset(release.assets);
+    const asset = findBestAsset(release.assets, detectCurrentEdition());
     if (!asset) {
       return {
         hasUpdate: true,
@@ -244,15 +326,19 @@ async function checkForUpdate() {
 
 /**
  * Download installer with retry logic.
- * Retries up to 3 times on network errors / timeouts, with 5s delay between attempts.
+ * Retries up to maxRetries times on network errors / timeouts, with
+ * retryDelay between attempts. Retries RESUME from the partial file
+ * (Range request) instead of restarting from zero, which matters a lot
+ * on slow connections.
  * @param {string} url
  * @param {(progress: number, total: number) => void} onProgress
- * @param {object} [opts] - { maxRetries=3, retryDelay=5000 }
- * @returns {Promise<string>} path to downloaded installer
+ * @param {object} [opts] - { maxRetries=3, retryDelay=5000, timeoutMs=300000 }
+ * @returns {Promise<{ destPath: string, assetName: string }>}
  */
 async function downloadInstaller(url, onProgress, opts = {}) {
   const maxRetries = opts.maxRetries != null ? opts.maxRetries : 3;
   const retryDelay = opts.retryDelay != null ? opts.retryDelay : 5000;
+  const timeoutMs = opts.timeoutMs != null ? opts.timeoutMs : 300000;
 
   const tempDir = os.tmpdir();
   const fileName = path.basename(new URL(url).pathname);
@@ -262,17 +348,24 @@ async function downloadInstaller(url, onProgress, opts = {}) {
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      // Reset progress for retry
+      // Resume from any existing partial file (e.g. after a failed attempt).
+      let start = 0;
+      try {
+        if (fs.existsSync(destPath)) start = fs.statSync(destPath).size || 0;
+      } catch { start = 0; }
+
       if (attempt > 1 && onProgress) {
-        onProgress(0, 0);
+        onProgress(-1, attempt); // special signal: retry
       }
 
-      const result = await downloadFile(url, destPath, onProgress);
-      return result;
+      const result = await downloadFile(url, destPath, onProgress, { start, timeoutMs });
+      // downloadFile resolves with undefined; verify the file really exists.
+      const size = fs.existsSync(destPath) ? fs.statSync(destPath).size : 0;
+      if (size <= 0) throw new Error('Downloaded file is empty');
+      return { destPath, assetName: fileName };
     } catch (e) {
       lastError = e;
-      // Clean up partial file
-      try { fs.unlinkSync(destPath); } catch {}
+      // Keep the partial file for the next attempt to resume from.
 
       if (attempt < maxRetries) {
         // Notify progress window about retry
@@ -284,6 +377,8 @@ async function downloadInstaller(url, onProgress, opts = {}) {
     }
   }
 
+  // All attempts failed — clean up the partial file.
+  try { fs.unlinkSync(destPath); } catch {}
   throw lastError || new Error('Download failed after retries');
 }
 
@@ -291,5 +386,7 @@ module.exports = {
   checkForUpdate,
   downloadInstaller,
   compareVersions,
+  findBestAsset,
+  detectCurrentEdition,
   CURRENT_VERSION,
 };
