@@ -125,6 +125,38 @@ function downloadFile(url, destPath, onProgress) {
     let total = 0;
 
     const req = https.get(url, { timeout: 120000 }, (res) => {
+      // Handle 302 redirect
+      if (res.statusCode === 302 || res.statusCode === 301) {
+        const redirectUrl = res.headers.location;
+        if (!redirectUrl) {
+          file.close();
+          fs.unlinkSync(destPath);
+          return reject(new Error(`Redirect failed: ${res.statusCode}`));
+        }
+        // Follow redirect
+        return https.get(redirectUrl, { timeout: 120000 }, (res2) => {
+          if (res2.statusCode !== 200) {
+            file.close();
+            fs.unlinkSync(destPath);
+            return reject(new Error(`Download failed: ${res2.statusCode}`));
+          }
+          total = parseInt(res2.headers['content-length'], 10) || 0;
+          res2.on('data', (chunk) => {
+            downloaded += chunk.length;
+            if (total > 0 && onProgress) onProgress(downloaded, total);
+          });
+          res2.pipe(file);
+          file.on('finish', () => {
+            file.close();
+            resolve();
+          });
+        }).on('error', (e) => {
+          file.close();
+          try { fs.unlinkSync(destPath); } catch {}
+          reject(e);
+        });
+      }
+
       if (res.statusCode !== 200) {
         file.close();
         fs.unlinkSync(destPath);
