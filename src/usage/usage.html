@@ -191,7 +191,7 @@ function renderSummary(stats) {
     { label: '输出 Token', value: fmt(s.totalOutputTokens), unit: '' },
     { label: '缓存读取', value: fmt(s.totalCacheRead), unit: '' },
     { label: '缓存写入', value: fmt(s.totalCacheWrite), unit: '' },
-    { label: '平均耗时', value: fmtMs(s.avgLlmMs), unit: '' },
+    { label: '调用次数', value: s.totalCalls || 0, unit: '次' },
   ];
   return '<div class="summary-grid">' + cards.map(c =>
     `<div class="stat-card"><div class="label">${c.label}</div><div class="value">${c.value}<span class="unit">${c.unit}</span></div></div>`
@@ -248,17 +248,44 @@ function renderProjectTable(projects) {
 function renderModelTable(models) {
   if (!models || models.length === 0) return '<div class="empty">暂无模型数据</div>';
   let html = '<table><thead><tr>';
-  html += '<th>模型/Provider</th><th>Provider ID</th><th class="num">余额</th>';
+  html += '<th>模型</th><th>Provider</th><th class="num">输入 Token</th><th class="num">输出 Token</th>';
+  html += '<th class="num">缓存读取</th><th class="num">缓存写入</th><th class="num">总 Token</th><th class="num">调用次数</th>';
   html += '</tr></thead><tbody>';
   for (const m of models) {
     html += `<tr>
       <td><strong>${m.model}</strong></td>
       <td>${m.provider}</td>
-      <td class="num">${m.balance != null ? m.balance + ' ' + (m.currency || '') : '-'}</td>
+      <td class="num">${fmt(m.inputTokens)}</td>
+      <td class="num">${fmt(m.outputTokens)}</td>
+      <td class="num">${fmt(m.cacheRead)}</td>
+      <td class="num">${fmt(m.cacheWrite)}</td>
+      <td class="num"><strong>${fmt(m.totalTokens)}</strong></td>
+      <td class="num">${m.calls}</td>
     </tr>`;
   }
   html += '</tbody></table>';
-  html += '<p style="color:var(--muted);font-size:12px;margin-top:8px;">注：dsh 数据文件中未记录每个会话使用的模型，此处仅展示已配置的 Provider 余额信息。</p>';
+  return html;
+}
+
+function renderProviderTable(providers) {
+  if (!providers || providers.length === 0) return '<div class="empty">暂无 Provider 数据</div>';
+  let html = '<table><thead><tr>';
+  html += '<th>Provider</th><th class="num">输入 Token</th><th class="num">输出 Token</th>';
+  html += '<th class="num">缓存读取</th><th class="num">缓存写入</th><th class="num">总 Token</th><th class="num">调用次数</th><th class="num">余额</th>';
+  html += '</tr></thead><tbody>';
+  for (const p of providers) {
+    html += `<tr>
+      <td><strong>${p.provider}</strong></td>
+      <td class="num">${fmt(p.inputTokens)}</td>
+      <td class="num">${fmt(p.outputTokens)}</td>
+      <td class="num">${fmt(p.cacheRead)}</td>
+      <td class="num">${fmt(p.cacheWrite)}</td>
+      <td class="num"><strong>${fmt(p.totalTokens)}</strong></td>
+      <td class="num">${p.calls}</td>
+      <td class="num">${p.balance != null ? p.balance + ' ' + (p.currency || '') : '-'}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
   return html;
 }
 
@@ -292,9 +319,27 @@ async function loadStats() {
   try {
     const stats = await api.usage.getStats(granularity, range);
     let html = renderSummary(stats);
-    html += `<div class="section"><h2>按时间分布（粒度：${stats.granularity}）</h2>${renderPeriodChart(stats.periods)}</div>`;
-    html += `<div class="section"><h2>按项目统计</h2>${renderProjectTable(stats.projects)}</div>`;
-    html += `<div class="section"><h2>模型 / Provider</h2>${renderModelTable(stats.models)}</div>`;
+    
+    // Time distribution (from ledger)
+    if (stats.periods && stats.periods.length > 0) {
+      html += `<div class="section"><h2>按时间分布（粒度：${stats.granularity}）</h2>${renderPeriodChart(stats.periods)}</div>`;
+    }
+    
+    // Model breakdown
+    if (stats.models && stats.models.length > 0) {
+      html += `<div class="section"><h2>按模型统计</h2>${renderModelTable(stats.models)}</div>`;
+    }
+    
+    // Provider breakdown
+    if (stats.providers && stats.providers.length > 0) {
+      html += `<div class="section"><h2>按 Provider 统计</h2>${renderProviderTable(stats.providers)}</div>`;
+    }
+    
+    // Project breakdown (from session projcache)
+    if (stats.projects && stats.projects.length > 0) {
+      html += `<div class="section"><h2>按项目统计</h2>${renderProjectTable(stats.projects)}</div>`;
+    }
+    
     content.innerHTML = html;
   } catch (e) {
     content.innerHTML = `<div class="empty">加载失败：${e.message || e}</div>`;

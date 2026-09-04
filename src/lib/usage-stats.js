@@ -2,8 +2,9 @@
 
 /**
  * Usage statistics reader for dsh data files.
- * Reads from ~/.dsh/storages/session_projcache.json and workspace.json
- * to aggregate token usage, sessions, interactions by project/model/time.
+ * Reads from ~/.dsh/storages/session_projcache.json, workspace.json,
+ * and ~/.dsh/dsh-usage/usage-ledger.json to aggregate token usage,
+ * sessions, interactions by project/model/time.
  */
 
 const fs = require('fs');
@@ -61,6 +62,37 @@ function extractSessions() {
   }
 
   return sessions;
+}
+
+/**
+ * Extract usage ledger from dsh-usage/usage-ledger.json.
+ * Returns aggregated stats by provider/model/day.
+ */
+function extractUsageLedger() {
+  const ledgerFile = path.join(DSH_HOME, 'dsh-usage', 'usage-ledger.json');
+  const data = readJson(ledgerFile);
+  if (!data || !data.days) return [];
+
+  const records = [];
+  for (const [date, providers] of Object.entries(data.days)) {
+    for (const [providerId, models] of Object.entries(providers)) {
+      for (const [modelId, stats] of Object.entries(models)) {
+        records.push({
+          date,
+          provider: providerId,
+          model: modelId,
+          inputTokens: stats.inputTokens || 0,
+          outputTokens: stats.outputTokens || 0,
+          cacheReadTokens: stats.cacheReadTokens || 0,
+          cacheWriteTokens: stats.cacheWriteTokens || 0,
+          reasoningTokens: stats.reasoningTokens || 0,
+          calls: stats.calls || 0,
+          cost: stats.cost || 0,
+        });
+      }
+    }
+  }
+  return records;
 }
 
 /**
@@ -147,6 +179,7 @@ function periodKey(ts, granularity) {
 function getUsageStats(granularity = 'day', range = null) {
   const sessions = extractSessions();
   const workspaces = extractWorkspaces();
+  const ledger = extractUsageLedger();
 
   // Build cwd -> project name map
   const projectMap = {};
@@ -154,16 +187,26 @@ function getUsageStats(granularity = 'day', range = null) {
     if (ws.path) projectMap[ws.path] = ws.title;
   }
 
-  // Filter by date range if provided
-  let filtered = sessions;
+  // Filter ledger by date range if provided
+  let filteredLedger = ledger;
   if (range && range.start && range.end) {
-    filtered = sessions.filter(s => s.createdAt >= range.start && s.createdAt <= range.end);
+    filteredLedger = ledger.filter(r => {
+      const dateStart = new Date(r.date + 'T00:00:00').getTime();
+      const dateEnd = new Date(r.date + 'T23:59:59.999').getTime();
+      return dateStart >= range.start && dateEnd <= range.end;
+    });
   }
 
   // Determine auto granularity based on date span
   let actualGranularity = granularity;
-  if (granularity === 'auto' && filtered.length > 0) {
-    const times = filtered.map(s => s.createdAt).filter(t => t > 0).sort((a, b) => a - b);
+  const filteredSessions = sessions.filter(s => {
+    if (range && range.start && range.end) {
+      return s.createdAt >= range.start && s.createdAt <= range.end;
+    }
+    return true;
+  });
+  if (granularity === 'auto' && filteredSessions.length > 0) {
+    const times = filteredSessions.map(s => s.createdAt).filter(t => t > 0).sort((a, b) => a - b);
     if (times.length > 0) {
       const span = times[times.length - 1] - times[0];
       const days = span / (24 * 60 * 60 * 1000);
@@ -175,59 +218,108 @@ function getUsageStats(granularity = 'day', range = null) {
     }
   }
 
-  // Aggregate by time period
+  // Aggregate by time period (from ledger)
   const byPeriod = {};
-  // Aggregate by project
-  const byProject = {};
-  // Aggregate by model (from session stats - dsh doesn't store model per session
-  // in projcache, so we approximate from provider-snapshots if available)
+  // Aggregate by model (from ledger)
   const byModel = {};
+  // Aggregate by provider
+  const byProvider = {};
 
-  let totalSessions = 0;
-  let totalTurns = 0;
-  let totalSteps = 0;
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let totalCacheRead = 0;
   let totalCacheWrite = 0;
+  let totalCalls = 0;
+
+  for (const r of filteredLedger) {
+    const period = r.date;
+    const modelKey = `${r.provider}/${r.model}`;
+
+    totalInputTokens += r.inputTokens;
+    totalOutputTokens += r.outputTokens;
+    totalCacheRead += r.cacheReadTokens;
+    totalCacheWrite += r.cacheWriteTokens;
+    totalCalls += r.calls;
+
+    // By period
+    if (!byPeriod[period]) {
+      byPeriod[period] = {
+        period, inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0,
+        calls: 0, totalTokens: 0,
+      };
+    }
+    const p = byPeriod[period];
+    p.inputTokens += r.inputTokens;
+    p.outputTokens += r.outputTokens;
+    p.cacheRead += r.cacheReadTokens;
+    p.cacheWrite += r.cacheWriteTokens;
+    p.calls += r.calls;
+    p.totalTokens = p.inputTokens + p.outputTokens + p.cacheRead + p.cacheWrite;
+
+    // By model
+    if (!byModel[modelKey]) {
+      byModel[modelKey] = {
+        model: r.model,
+        provider: r.provider,
+        inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0,
+        calls: 0, totalTokens: 0,
+      };
+    }
+    const m = byModel[modelKey];
+    m.inputTokens += r.inputTokens;
+    m.outputTokens += r.outputTokens;
+    m.cacheRead += r.cacheReadTokens;
+    m.cacheWrite += r.cacheWriteTokens;
+    m.calls += r.calls;
+    m.totalTokens = m.inputTokens + m.outputTokens + m.cacheRead + m.cacheWrite;
+
+    // By provider
+    if (!byProvider[r.provider]) {
+      byProvider[r.provider] = {
+        provider: r.provider,
+        inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0,
+        calls: 0, totalTokens: 0,
+      };
+    }
+    const pr = byProvider[r.provider];
+    pr.inputTokens += r.inputTokens;
+    pr.outputTokens += r.outputTokens;
+    pr.cacheRead += r.cacheReadTokens;
+    pr.cacheWrite += r.cacheWriteTokens;
+    pr.calls += r.calls;
+    pr.totalTokens = pr.inputTokens + pr.outputTokens + pr.cacheRead + pr.cacheWrite;
+  }
+
+  // Try to read balance info from provider-snapshots
+  const snapshotsFile = path.join(DSH_HOME, 'dsh-usage', 'provider-snapshots.json');
+  const snapshots = readJson(snapshotsFile);
+  if (snapshots && snapshots.providers) {
+    for (const [providerId, providerData] of Object.entries(snapshots.providers)) {
+      if (byProvider[providerId]) {
+        byProvider[providerId].balance = providerData.balance?.totalBalance || null;
+        byProvider[providerId].currency = providerData.balance?.currency || null;
+      }
+    }
+  }
+
+  // Session stats (from projcache - may be empty if dsh hasn't written them yet)
+  let totalSessions = 0;
+  let totalTurns = 0;
+  let totalSteps = 0;
   let totalLlmMs = 0;
+  const byProject = {};
 
-  for (const s of filtered) {
+  for (const s of filteredSessions) {
     const projName = projectMap[s.cwd] || projectFromCwd(s.cwd);
-    const period = periodKey(s.createdAt, actualGranularity);
-    const date = dateStr(s.createdAt);
 
-    // Skip empty sessions (no turns and no tokens)
+    // Skip empty sessions
     if (s.turns === 0 && s.outputTokens === 0 && s.uncachedInputTokens === 0) continue;
 
     totalSessions++;
     totalTurns += s.turns;
     totalSteps += s.steps;
-    totalInputTokens += s.uncachedInputTokens;
-    totalOutputTokens += s.outputTokens;
-    totalCacheRead += s.cacheReadTokens;
-    totalCacheWrite += s.cacheWriteTokens;
     totalLlmMs += s.llmMs;
 
-    // By period
-    if (!byPeriod[period]) {
-      byPeriod[period] = {
-        period, sessions: 0, turns: 0, steps: 0,
-        inputTokens: 0, outputTokens: 0, cacheRead: 0, cacheWrite: 0,
-        llmMs: 0,
-      };
-    }
-    const p = byPeriod[period];
-    p.sessions++;
-    p.turns += s.turns;
-    p.steps += s.steps;
-    p.inputTokens += s.uncachedInputTokens;
-    p.outputTokens += s.outputTokens;
-    p.cacheRead += s.cacheReadTokens;
-    p.cacheWrite += s.cacheWriteTokens;
-    p.llmMs += s.llmMs;
-
-    // By project
     if (!byProject[projName]) {
       byProject[projName] = {
         project: projName, cwd: s.cwd, sessions: 0, turns: 0, steps: 0,
@@ -247,27 +339,11 @@ function getUsageStats(granularity = 'day', range = null) {
     if (s.createdAt > pr.lastUsed) pr.lastUsed = s.createdAt;
   }
 
-  // Try to read model info from provider-snapshots (for display)
-  const snapshotsFile = path.join(DSH_HOME, 'dsh-usage', 'provider-snapshots.json');
-  const snapshots = readJson(snapshotsFile);
-  if (snapshots && snapshots.providers) {
-    for (const [providerId, providerData] of Object.entries(snapshots.providers)) {
-      const displayName = providerData.displayName || providerId;
-      byModel[displayName] = {
-        model: displayName,
-        provider: providerId,
-        balance: providerData.balance?.totalBalance || null,
-        currency: providerData.balance?.currency || null,
-        // Note: per-model token usage is not available in dsh data files
-        // We show provider info instead
-      };
-    }
-  }
-
   // Convert to sorted arrays
   const periods = Object.values(byPeriod).sort((a, b) => a.period.localeCompare(b.period));
+  const models = Object.values(byModel).sort((a, b) => b.totalTokens - a.totalTokens);
+  const providers = Object.values(byProvider).sort((a, b) => b.totalTokens - a.totalTokens);
   const projects = Object.values(byProject).sort((a, b) => b.sessions - a.sessions);
-  const models = Object.values(byModel).sort((a, b) => a.model.localeCompare(b.model));
 
   return {
     granularity: actualGranularity,
@@ -280,13 +356,16 @@ function getUsageStats(granularity = 'day', range = null) {
       totalCacheRead,
       totalCacheWrite,
       totalTokens: totalInputTokens + totalOutputTokens + totalCacheRead + totalCacheWrite,
+      totalCalls,
       totalLlmMs,
       avgLlmMs: totalSessions > 0 ? Math.round(totalLlmMs / totalSessions) : 0,
     },
     periods,
     projects,
     models,
+    providers,
     rawSessionCount: sessions.length,
+    ledgerRecordCount: ledger.length,
   };
 }
 
