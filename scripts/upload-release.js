@@ -15,8 +15,8 @@ const path = require('path');
 const https = require('https');
 
 const REPO = 'chenans/DSH-My-simple-desktop';
-const TAG = 'v0.1.21';
-const VERSION = '0.1.21';
+const TAG = 'v0.1.22';
+const VERSION = '0.1.22';
 
 // --- Get token from git credential helper ---
 function getToken() {
@@ -142,11 +142,18 @@ async function main() {
     // 3. Create release
     console.log();
     console.log('[3/4] Creating new release...');
-    const releaseBody = `## v${VERSION} — 修复 token URL 捕获时序
+    const releaseBody = `## v${VERSION} — 自动更新 + token URL 时序修复
+
+### 新增
+
+- **自动更新** — 菜单栏"帮助 → 检查更新"，从 GitHub Release 检查最新版本，用户确认后下载安装包，下载完成后重启自动安装
+  - 无新依赖，纯手写 GitHub API + 下载逻辑
+  - 支持进度提示，安装包下载到临时目录
+  - 退出时静默安装（\`--silent\` 参数）
 
 ### 修复
 
-- **token URL 捕获太早** — dsh 0.1.2-rc.1+ 在 HTTP 健康检查通过后才输出 \`dsh web: <url>?token=...\`，导致 Electron 窗口加载时用的还是裸 URL。修复：健康检查通过后额外等待 500ms，确保 token URL 已捕获。
+- **token URL 捕获时序** — dsh 0.1.2-rc.1+ 在 HTTP 健康检查通过后才输出 token URL，导致 Electron 窗口加载时用的还是裸 URL。修复：健康检查通过后额外等待 500ms，确保 token URL 已捕获
 
 ### 下载
 
@@ -161,12 +168,13 @@ async function main() {
 1. 下载对应版本的 Setup.exe
 2. 双击运行安装（如提示 SmartScreen，点击"仍要运行"）
 3. 安装完成后从开始菜单启动"DSH My Simple Desktop"
+4. 菜单栏"帮助 → 检查更新"即可自动升级到最新版
 
 > 完整版和插件版首次启动会自动部署 dsh 运行时到 \`%USERPROFILE%\\.dsh-desktop\`，请耐心等待进度条完成。`;
 
     const createResp = await apiCall('POST', 'releases', {
       tag_name: TAG,
-      name: `v${VERSION} — 修复 token URL 捕获时序`,
+      name: `v${VERSION} — 自动更新 + token URL 时序修复`,
       body: releaseBody,
       draft: false,
       prerelease: false,

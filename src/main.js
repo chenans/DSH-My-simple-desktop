@@ -47,7 +47,7 @@ const log = require('electron-log/main');
 const { findFreePort } = require('./lib/port');
 const { resolveDshCommand } = require('./lib/dsh-resolve');
 const settings = require('./lib/settings');
-const updater = require('./lib/updater');
+const updateChecker = require('./lib/update-checker');
 const runtimeUpdater = require('./lib/runtime-updater');
 const pluginDeployer = require('./lib/plugin-deployer');
 
@@ -874,6 +874,119 @@ async function checkActiveLlmTask() {
 }
 
 function createMainWindow(url) {
+  // Build application menu
+  const { Menu, dialog } = require('electron');
+  const template = [
+    {
+      label: '文件',
+      submenu: [
+        { role: 'quit', label: '退出' },
+      ],
+    },
+    {
+      label: '编辑',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+      ],
+    },
+    {
+      label: '视图',
+      submenu: [
+        { role: 'reload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    {
+      label: '帮助',
+      submenu: [
+        {
+          label: '检查更新…',
+          click: async () => {
+            const result = await updateChecker.checkForUpdate();
+            if (result.error) {
+              dialog.showMessageBox(mainWindow, {
+                type: 'error',
+                title: '检查更新失败',
+                message: result.error,
+              });
+              return;
+            }
+            if (!result.hasUpdate) {
+              dialog.showMessageBox(mainWindow, {
+                type: 'info',
+                title: '已是最新版本',
+                message: `当前版本 ${updateChecker.CURRENT_VERSION}，已是最新。`,
+              });
+              return;
+            }
+            dialog.showMessageBox(mainWindow, {
+              type: 'question',
+              title: `发现新版本 v${result.latestVersion}`,
+              message: `发现新版本 v${result.latestVersion}，当前版本 ${updateChecker.CURRENT_VERSION}。\n是否立即下载更新？`,
+              buttons: ['下载', '取消'],
+              defaultId: 0,
+            }).then(async ({ response }) => {
+              if (response === 0 && result.downloadUrl) {
+                dialog.showMessageBox(mainWindow, {
+                  type: 'info',
+                  title: '正在下载更新',
+                  message: '下载将在后台进行，完成后会提示您重启安装。',
+                  buttons: ['确定'],
+                });
+                try {
+                  const { destPath, assetName } = await ipcMain.handle('updater:download', result.downloadUrl);
+                  dialog.showMessageBox(mainWindow, {
+                    type: 'info',
+                    title: '更新已下载',
+                    message: `安装包已下载：${assetName}\n点击"确定"退出并安装。`,
+                    buttons: ['确定', '稍后'],
+                    defaultId: 0,
+                  }).then(async ({ response: resp2 }) => {
+                    if (resp2 === 0) {
+                      const { spawn } = require('child_process');
+                      spawn(destPath, ['--silent'], {
+                        detached: true,
+                        stdio: 'ignore',
+                      }).unref();
+                      isQuitting = true;
+                      app.quit();
+                    }
+                  });
+                } catch (e) {
+                  dialog.showMessageBox(mainWindow, {
+                    type: 'error',
+                    title: '下载失败',
+                    message: String(e.message || e),
+                  });
+                }
+              }
+            });
+          },
+        },
+        {
+          label: '关于',
+          click: () => {
+            dialog.showMessageBox(mainWindow, {
+              type: 'info',
+              title: '关于',
+              message: `DSH My Simple Desktop\n版本 ${updateChecker.CURRENT_VERSION}`,
+              detail: '中国电信研发云 - CodeFree-O',
+            });
+          },
+        },
+      ],
+    },
+  ];
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -1091,7 +1204,68 @@ function buildTrayMenu() {
     },
     {
       label: '检查更新…',
-      click: () => updater.check(),
+      click: async () => {
+        const result = await updateChecker.checkForUpdate();
+        if (result.error) {
+          dialog.showMessageBox(mainWindow, {
+            type: 'error',
+            title: '检查更新失败',
+            message: result.error,
+          });
+          return;
+        }
+        if (!result.hasUpdate) {
+          dialog.showMessageBox(mainWindow, {
+            type: 'info',
+            title: '已是最新版本',
+            message: `当前版本 ${updateChecker.CURRENT_VERSION}，已是最新。`,
+          });
+          return;
+        }
+        dialog.showMessageBox(mainWindow, {
+          type: 'question',
+          title: `发现新版本 v${result.latestVersion}`,
+          message: `发现新版本 v${result.latestVersion}，当前版本 ${updateChecker.CURRENT_VERSION}。\n是否立即下载更新？`,
+          buttons: ['下载', '取消'],
+          defaultId: 0,
+        }).then(async ({ response }) => {
+          if (response === 0 && result.downloadUrl) {
+            dialog.showMessageBox(mainWindow, {
+              type: 'info',
+              title: '正在下载更新',
+              message: '下载将在后台进行，完成后会提示您重启安装。',
+              buttons: ['确定'],
+            });
+            try {
+              const { destPath, assetName } = await ipcMain.handle('updater:download', result.downloadUrl);
+              dialog.showMessageBox(mainWindow, {
+                type: 'info',
+                title: '更新已下载',
+                message: `安装包已下载：${assetName}\n点击"确定"退出并安装。`,
+                buttons: ['确定', '稍后'],
+                defaultId: 0,
+              }).then(async ({ response: resp2 }) => {
+                if (resp2 === 0) {
+                  // Spawn installer and quit
+                  const { spawn } = require('child_process');
+                  spawn(destPath, ['--silent'], {
+                    detached: true,
+                    stdio: 'ignore',
+                  }).unref();
+                  isQuitting = true;
+                  app.quit();
+                }
+              });
+            } catch (e) {
+              dialog.showMessageBox(mainWindow, {
+                type: 'error',
+                title: '下载失败',
+                message: String(e.message || e),
+              });
+            }
+          }
+        });
+      },
     },
     { type: 'separator' },
     {
@@ -1258,7 +1432,19 @@ function registerIpc() {
     shell.openPath(path.dirname(log.transports.file.getFile().path));
   });
   ipcMain.handle('shell:open-workspace', () => shell.openPath(workspaceDir()));
-  ipcMain.handle('updater:check', () => updater.check());
+  ipcMain.handle('updater:check', async () => {
+    const result = await updateChecker.checkForUpdate();
+    return result;
+  });
+  ipcMain.handle('updater:download', async (_e, url) => {
+    let progress = 0;
+    const onProgress = (done, total) => {
+      progress = total > 0 ? Math.round((done / total) * 100) : 0;
+      mainWindow?.webContents.send('updater:progress', progress);
+    };
+    const destPath = await updateChecker.downloadInstaller(url, onProgress);
+    return { destPath, assetName: path.basename(destPath) };
+  });
   ipcMain.handle('app:quit', () => {
     isQuitting = true;
     app.quit();
@@ -1270,8 +1456,8 @@ function registerIpc() {
     chrome: process.versions.chrome,
     node: process.versions.node,
     packaged: app.isPackaged,
-    updateEnabled: updater.isEnabled(),
-    updateUrl: process.env.DSH_DESKTOP_UPDATE_URL || null,
+    updateEnabled: true,
+    updateUrl: 'github://chenans/DSH-My-simple-desktop',
   }));
   ipcMain.handle('app:log', (_e, level, message) => {
     const fn = typeof log[level] === 'function' ? log[level] : log.info;
