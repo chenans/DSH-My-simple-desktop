@@ -935,17 +935,16 @@ function createMainWindow(url) {
               defaultId: 0,
             }).then(async ({ response }) => {
               if (response === 0 && result.downloadUrl) {
-                dialog.showMessageBox(mainWindow, {
-                  type: 'info',
-                  title: '正在下载更新',
-                  message: '下载将在后台进行，完成后会提示您重启安装。',
-                  buttons: ['确定'],
-                });
+                createDownloadProgressWindow();
                 try {
                   const { destPath, assetName } = await updateChecker.downloadInstaller(result.downloadUrl, (done, total) => {
-                    const progress = total > 0 ? Math.round((done / total) * 100) : 0;
-                    mainWindow?.webContents.send('updater:progress', progress);
+                    sendDownloadProgress(done, total);
                   });
+                  if (_downloadProgressWin && !_downloadProgressWin.isDestroyed()) {
+                    _downloadProgressWin.webContents.send('update-download-done');
+                  }
+                  await new Promise(r => setTimeout(r, 1000));
+                  closeDownloadProgressWindow();
                   dialog.showMessageBox(mainWindow, {
                     type: 'info',
                     title: '更新已下载',
@@ -964,6 +963,7 @@ function createMainWindow(url) {
                     }
                   });
                 } catch (e) {
+                  closeDownloadProgressWindow();
                   dialog.showMessageBox(mainWindow, {
                     type: 'error',
                     title: '下载失败',
@@ -1193,17 +1193,16 @@ function buildTrayMenu() {
           defaultId: 0,
         }).then(async ({ response }) => {
           if (response === 0 && result.downloadUrl) {
-            dialog.showMessageBox(mainWindow, {
-              type: 'info',
-              title: '正在下载更新',
-              message: '下载将在后台进行，完成后会提示您重启安装。',
-              buttons: ['确定'],
-            });
+            createDownloadProgressWindow();
             try {
               const { destPath, assetName } = await updateChecker.downloadInstaller(result.downloadUrl, (done, total) => {
-                const progress = total > 0 ? Math.round((done / total) * 100) : 0;
-                mainWindow?.webContents.send('updater:progress', progress);
+                sendDownloadProgress(done, total);
               });
+              if (_downloadProgressWin && !_downloadProgressWin.isDestroyed()) {
+                _downloadProgressWin.webContents.send('update-download-done');
+              }
+              await new Promise(r => setTimeout(r, 1000));
+              closeDownloadProgressWindow();
               dialog.showMessageBox(mainWindow, {
                 type: 'info',
                 title: '更新已下载',
@@ -1223,6 +1222,7 @@ function buildTrayMenu() {
                 }
               });
             } catch (e) {
+              closeDownloadProgressWindow();
               dialog.showMessageBox(mainWindow, {
                 type: 'error',
                 title: '下载失败',
@@ -1398,6 +1398,63 @@ function handleCliArgs(argv) {
 
 let _lastNotifiedVersion = null;
 let _autoUpdateTimer = null;
+let _downloadProgressWin = null;
+
+/**
+ * Create a small progress window for update downloads.
+ */
+function createDownloadProgressWindow() {
+  if (_downloadProgressWin && !_downloadProgressWin.isDestroyed()) {
+    _downloadProgressWin.show();
+    _downloadProgressWin.focus();
+    return _downloadProgressWin;
+  }
+
+  _downloadProgressWin = new BrowserWindow({
+    width: 420,
+    height: 200,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    title: '下载更新',
+    parent: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+    modal: false,
+    show: true,
+    autoHideMenuBar: true,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+    },
+  });
+
+  _downloadProgressWin.loadFile(path.join(__dirname, 'updater', 'download-progress.html'));
+  _downloadProgressWin.on('closed', () => { _downloadProgressWin = null; });
+  return _downloadProgressWin;
+}
+
+/**
+ * Send download progress to the progress window.
+ */
+function sendDownloadProgress(done, total) {
+  const progress = total > 0 ? Math.round((done / total) * 100) : 0;
+  if (_downloadProgressWin && !_downloadProgressWin.isDestroyed()) {
+    _downloadProgressWin.webContents.send('update-download-progress', {
+      percent: progress,
+      done,
+      total,
+    });
+  }
+}
+
+/**
+ * Close the download progress window.
+ */
+function closeDownloadProgressWindow() {
+  if (_downloadProgressWin && !_downloadProgressWin.isDestroyed()) {
+    _downloadProgressWin.close();
+    _downloadProgressWin = null;
+  }
+}
 
 /**
  * Show a native notification in the bottom-right corner.
@@ -1452,18 +1509,21 @@ async function promptDownloadUpdate(latestVersion, downloadUrl, assetName) {
 
   if (response !== 0 || !downloadUrl) return;
 
-  dialog.showMessageBox(mainWindow, {
-    type: 'info',
-    title: '正在下载更新',
-    message: '下载将在后台进行，完成后会提示您重启安装。',
-    buttons: ['确定'],
-  });
+  // Show download progress window
+  createDownloadProgressWindow();
 
   try {
     const { destPath } = await updateChecker.downloadInstaller(downloadUrl, (done, total) => {
-      const progress = total > 0 ? Math.round((done / total) * 100) : 0;
-      mainWindow?.webContents.send('updater:progress', progress);
+      sendDownloadProgress(done, total);
     });
+
+    // Download complete
+    if (_downloadProgressWin && !_downloadProgressWin.isDestroyed()) {
+      _downloadProgressWin.webContents.send('update-download-done');
+    }
+    // Small delay to let user see "done" state
+    await new Promise(r => setTimeout(r, 1000));
+    closeDownloadProgressWindow();
 
     const { response: resp2 } = await dialog.showMessageBox(mainWindow, {
       type: 'info',
@@ -1480,6 +1540,7 @@ async function promptDownloadUpdate(latestVersion, downloadUrl, assetName) {
       app.quit();
     }
   } catch (e) {
+    closeDownloadProgressWindow();
     dialog.showMessageBox(mainWindow, {
       type: 'error',
       title: '下载失败',
