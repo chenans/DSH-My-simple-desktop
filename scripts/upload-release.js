@@ -15,8 +15,8 @@ const path = require('path');
 const https = require('https');
 
 const REPO = 'chenans/DSH-My-simple-desktop';
-const TAG = 'v0.1.20';
-const VERSION = '0.1.20';
+const TAG = 'v0.1.21';
+const VERSION = '0.1.21';
 
 // --- Get token from git credential helper ---
 function getToken() {
@@ -142,11 +142,11 @@ async function main() {
     // 3. Create release
     console.log();
     console.log('[3/4] Creating new release...');
-    const releaseBody = `## v${VERSION} — 兼容 dsh 0.1.2-rc.1 token 鉴权
+    const releaseBody = `## v${VERSION} — 修复 token URL 捕获时序
 
 ### 修复
 
-- **兼容 dsh 0.1.2-rc.1 token URL** — rc.1 版本启动后输出 \`dsh web: http://127.0.0.1:PORT/?token=...\`，Electron 窗口之前用裸 URL 访问被拒绝。现在从 dsh stdout 解析完整 URL（含 token），新旧版本兼容（有 token 用 token，无 token 回退裸 URL）
+- **token URL 捕获太早** — dsh 0.1.2-rc.1+ 在 HTTP 健康检查通过后才输出 \`dsh web: <url>?token=...\`，导致 Electron 窗口加载时用的还是裸 URL。修复：健康检查通过后额外等待 500ms，确保 token URL 已捕获。
 
 ### 下载
 
@@ -166,7 +166,7 @@ async function main() {
 
     const createResp = await apiCall('POST', 'releases', {
       tag_name: TAG,
-      name: `v${VERSION} — 兼容 dsh 0.1.2-rc.1 token 鉴权`,
+      name: `v${VERSION} — 修复 token URL 捕获时序`,
       body: releaseBody,
       draft: false,
       prerelease: false,

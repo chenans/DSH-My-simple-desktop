@@ -796,6 +796,11 @@ async function bootstrapDsh(preferSystem, timeoutMs) {
   }
   startDsh(port, preferSystem);
   await waitForHealthyUrl(port, timeoutMs || SERVER_TIMEOUT_MS);
+  // Wait a bit for dsh to emit the "dsh web: <url>" line with token (rc.1+).
+  // The HTTP health check may pass before dsh prints the token URL.
+  if (!dshReadyUrl) {
+    await new Promise(r => setTimeout(r, 500));
+  }
   // Prefer the token-bearing URL captured from dsh stdout (rc.1+).
   // Fall back to the bare URL for older dsh versions that don't emit a token.
   return dshReadyUrl || `http://127.0.0.1:${port}`;
