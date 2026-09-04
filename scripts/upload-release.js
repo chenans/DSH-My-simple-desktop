@@ -15,8 +15,8 @@ const path = require('path');
 const https = require('https');
 
 const REPO = 'chenans/DSH-My-simple-desktop';
-const TAG = 'v0.1.23';
-const VERSION = '0.1.23';
+const TAG = 'v0.1.24';
+const VERSION = '0.1.24';
 
 // --- Get token from git credential helper ---
 function getToken() {
@@ -182,7 +182,7 @@ async function main() {
 
     const createResp = await apiCall('POST', 'releases', {
       tag_name: TAG,
-      name: `v${VERSION} — 用量统计 + 关闭行为设置 + 菜单栏优化`,
+      name: `v${VERSION} — 修复自动更新下载错误`,
       body: releaseBody,
       draft: false,
       prerelease: false,

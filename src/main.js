@@ -942,7 +942,10 @@ function createMainWindow(url) {
                   buttons: ['确定'],
                 });
                 try {
-                  const { destPath, assetName } = await ipcMain.handle('updater:download', result.downloadUrl);
+                  const { destPath, assetName } = await updateChecker.downloadInstaller(result.downloadUrl, (done, total) => {
+                    const progress = total > 0 ? Math.round((done / total) * 100) : 0;
+                    mainWindow?.webContents.send('updater:progress', progress);
+                  });
                   dialog.showMessageBox(mainWindow, {
                     type: 'info',
                     title: '更新已下载',
@@ -1197,7 +1200,10 @@ function buildTrayMenu() {
               buttons: ['确定'],
             });
             try {
-              const { destPath, assetName } = await ipcMain.handle('updater:download', result.downloadUrl);
+              const { destPath, assetName } = await updateChecker.downloadInstaller(result.downloadUrl, (done, total) => {
+                const progress = total > 0 ? Math.round((done / total) * 100) : 0;
+                mainWindow?.webContents.send('updater:progress', progress);
+              });
               dialog.showMessageBox(mainWindow, {
                 type: 'info',
                 title: '更新已下载',
@@ -1415,15 +1421,6 @@ function registerIpc() {
   ipcMain.handle('updater:check', async () => {
     const result = await updateChecker.checkForUpdate();
     return result;
-  });
-  ipcMain.handle('updater:download', async (_e, url) => {
-    let progress = 0;
-    const onProgress = (done, total) => {
-      progress = total > 0 ? Math.round((done / total) * 100) : 0;
-      mainWindow?.webContents.send('updater:progress', progress);
-    };
-    const destPath = await updateChecker.downloadInstaller(url, onProgress);
-    return { destPath, assetName: path.basename(destPath) };
   });
   ipcMain.handle('app:quit', () => {
     isQuitting = true;
