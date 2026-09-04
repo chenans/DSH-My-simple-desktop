@@ -112,6 +112,7 @@ let dshReadyUrl = null;
 // Cached preferSystem flag from initial bootstrap — reused on crash restart
 // so we don't lose the "prefer system dsh" semantic across restarts.
 let dshPreferSystem = false;
+// Download state for tray convergence
 
 // ── splash / boot progress ──────────────────────────────────────────────────
 
@@ -1151,7 +1152,7 @@ function openExternalSafe(target) {
 
 function buildTrayMenu() {
   const visible = !!(mainWindow && mainWindow.isVisible());
-  return Menu.buildFromTemplate([
+  const items = [
     {
       label: visible ? '隐藏主窗口' : '显示主窗口',
       click: () => (visible ? mainWindow.hide() : showMainWindow()),
@@ -1165,7 +1166,68 @@ function buildTrayMenu() {
       label: '设置…',
       click: () => openSettingsWindow(),
     },
-    {
+  ];
+
+  // Download state menu items
+  if (_downloadState) {
+    if (_downloadState.state === 'downloading') {
+      const pct = _downloadState.percent || 0;
+      const retry = _downloadState.retryAttempt || 0;
+      items.push({
+        label: `下载更新 ${pct}%${retry > 0 ? `（重试 ${retry} 次）` : ''}`,
+        enabled: false,
+      });
+    } else if (_downloadState.state === 'done') {
+      items.push({
+        label: '更新已下载，准备安装',
+        enabled: false,
+      }, {
+        label: '安装更新并重启',
+        click: () => {
+          const { spawn } = require('child_process');
+          spawn(_downloadState.destPath, ['--silent'], {
+            detached: true,
+            stdio: 'ignore',
+          }).unref();
+          isQuitting = true;
+          app.quit();
+        },
+      });
+    } else if (_downloadState.state === 'error') {
+      items.push({
+        label: '下载失败',
+        enabled: false,
+      }, {
+        label: '重试下载',
+        click: async () => {
+          _downloadState.state = 'downloading';
+          _downloadState.retryAttempt = 0;
+          _downloadState.percent = 0;
+          updateTrayMenu();
+          try {
+            const { destPath } = await updateChecker.downloadInstaller(_downloadState.downloadUrl, (done, total, retryAttempt) => {
+              _downloadState.percent = total > 0 ? Math.round((done / total) * 100) : 0;
+              _downloadState.retryAttempt = retryAttempt || 0;
+              updateTrayMenu();
+            });
+            _downloadState.destPath = destPath;
+            _downloadState.state = 'done';
+            updateTrayMenu();
+            await new Promise(r => setTimeout(r, 2000));
+            const { spawn } = require('child_process');
+            spawn(destPath, ['--silent'], { detached: true, stdio: 'ignore' }).unref();
+            isQuitting = true;
+            app.quit();
+          } catch (e) {
+            _downloadState.state = 'error';
+            _downloadState.errorMsg = String(e.message || e);
+            updateTrayMenu();
+          }
+        },
+      });
+    }
+  } else {
+    items.push({
       label: '检查更新…',
       click: async () => {
         const result = await updateChecker.checkForUpdate();
@@ -1185,73 +1247,28 @@ function buildTrayMenu() {
           });
           return;
         }
-        dialog.showMessageBox(mainWindow, {
-          type: 'question',
-          title: `发现新版本 v${result.latestVersion}`,
-          message: `发现新版本 v${result.latestVersion}，当前版本 ${updateChecker.CURRENT_VERSION}。\n是否立即下载更新？`,
-          buttons: ['下载', '取消'],
-          defaultId: 0,
-        }).then(async ({ response }) => {
-          if (response === 0 && result.downloadUrl) {
-            createDownloadProgressWindow();
-            try {
-              const { destPath, assetName } = await updateChecker.downloadInstaller(result.downloadUrl, (done, total) => {
-                sendDownloadProgress(done, total);
-              });
-              if (_downloadProgressWin && !_downloadProgressWin.isDestroyed()) {
-                _downloadProgressWin.webContents.send('update-download-done');
-              }
-              await new Promise(r => setTimeout(r, 1000));
-              closeDownloadProgressWindow();
-              dialog.showMessageBox(mainWindow, {
-                type: 'info',
-                title: '更新已下载',
-                message: `安装包已下载：${assetName}\n点击"确定"退出并安装。`,
-                buttons: ['确定', '稍后'],
-                defaultId: 0,
-              }).then(async ({ response: resp2 }) => {
-                if (resp2 === 0) {
-                  // Spawn installer and quit
-                  const { spawn } = require('child_process');
-                  spawn(destPath, ['--silent'], {
-                    detached: true,
-                    stdio: 'ignore',
-                  }).unref();
-                  isQuitting = true;
-                  app.quit();
-                }
-              });
-            } catch (e) {
-              closeDownloadProgressWindow();
-              dialog.showMessageBox(mainWindow, {
-                type: 'error',
-                title: '下载失败',
-                message: String(e.message || e),
-              });
-            }
-          }
-        });
+        promptDownloadUpdate(result.latestVersion, result.downloadUrl, result.assetName);
       },
+    });
+  }
+
+  items.push({ type: 'separator' }, {
+    label: '开机自启',
+    type: 'checkbox',
+    checked: settings.get('autoLaunch', false),
+    click: (item) => {
+      settings.set('autoLaunch', item.checked);
+      applyAutoLaunch();
     },
-    { type: 'separator' },
-    {
-      label: '开机自启',
-      type: 'checkbox',
-      checked: settings.get('autoLaunch', false),
-      click: (item) => {
-        settings.set('autoLaunch', item.checked);
-        applyAutoLaunch();
-      },
+  }, { type: 'separator' }, {
+    label: '退出',
+    click: () => {
+      isQuitting = true;
+      app.quit();
     },
-    { type: 'separator' },
-    {
-      label: '退出',
-      click: () => {
-        isQuitting = true;
-        app.quit();
-      },
-    },
-  ]);
+  });
+
+  return Menu.buildFromTemplate(items);
 }
 
 function createTray() {
@@ -1259,6 +1276,30 @@ function createTray() {
   tray.setToolTip(APP_NAME);
   tray.on('click', () => tray.popUpContextMenu(buildTrayMenu()));
   tray.on('double-click', () => showMainWindow());
+}
+
+function updateTrayMenu() {
+  if (!tray || tray.isDestroyed()) return;
+
+  if (_downloadState) {
+    if (_downloadState.state === 'downloading') {
+      const pct = _downloadState.percent || 0;
+      const retry = _downloadState.retryAttempt || 0;
+      if (retry > 0) {
+        tray.setToolTip(`${APP_NAME} — 下载中断，正在重试（第 ${retry} 次）…`);
+      } else {
+        tray.setToolTip(`${APP_NAME} — 下载更新 ${pct}%`);
+      }
+    } else if (_downloadState.state === 'done') {
+      tray.setToolTip(`${APP_NAME} — 更新已下载，准备安装`);
+    } else if (_downloadState.state === 'error') {
+      tray.setToolTip(`${APP_NAME} — 下载更新失败`);
+    }
+  } else {
+    tray.setToolTip(APP_NAME);
+  }
+
+  tray.setContextMenu(buildTrayMenu());
 }
 
 // ---------------------------------------------------------------------------
@@ -1368,7 +1409,7 @@ function openUsageWindow() {
     minHeight: 500,
     title: '用量统计 — ' + APP_NAME,
     icon: ICON_PATH,
-    autoHideMenuBar: true,
+    frame: true,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1f1f1f' : '#ffffff',
     show: false,
     webPreferences: {
@@ -1508,60 +1549,42 @@ function showUpdateNotification(latestVersion, downloadUrl, assetName) {
  */
 async function promptDownloadUpdate(latestVersion, downloadUrl, assetName) {
   if (!mainWindow || mainWindow.isDestroyed()) {
-    // If window is hidden, show it first
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.show();
       mainWindow.focus();
     }
   }
 
-  const { response } = await dialog.showMessageBox(mainWindow, {
-    type: 'question',
-    title: `发现新版本 v${latestVersion}`,
-    message: `发现新版本 v${latestVersion}，当前版本 ${updateChecker.CURRENT_VERSION}。\n是否立即下载更新？`,
-    buttons: ['下载', '稍后'],
-    defaultId: 0,
-  });
-
-  if (response !== 0 || !downloadUrl) return;
-
-  // Show download progress window
-  createDownloadProgressWindow();
+  _downloadState = {
+    latestVersion,
+    downloadUrl,
+    assetName,
+    percent: 0,
+    state: 'downloading',
+    retryAttempt: 0,
+  };
+  updateTrayMenu();
 
   try {
-    const { destPath } = await updateChecker.downloadInstaller(downloadUrl, (done, total) => {
-      sendDownloadProgress(done, total);
+    const { destPath } = await updateChecker.downloadInstaller(downloadUrl, (done, total, retryAttempt) => {
+      _downloadState.percent = total > 0 ? Math.round((done / total) * 100) : 0;
+      _downloadState.retryAttempt = retryAttempt || 0;
+      updateTrayMenu();
     });
 
-    // Download complete
-    if (_downloadProgressWin && !_downloadProgressWin.isDestroyed()) {
-      _downloadProgressWin.webContents.send('update-download-done');
-    }
-    // Small delay to let user see "done" state
-    await new Promise(r => setTimeout(r, 1000));
-    closeDownloadProgressWindow();
+    _downloadState.destPath = destPath;
+    _downloadState.state = 'done';
+    updateTrayMenu();
+    await new Promise(r => setTimeout(r, 2000));
 
-    const { response: resp2 } = await dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      title: '更新已下载',
-      message: `安装包已下载完成。\n点击"确定"退出并安装，点击"稍后"下次启动时安装。`,
-      buttons: ['确定', '稍后'],
-      defaultId: 0,
-    });
-
-    if (resp2 === 0) {
-      const { spawn } = require('child_process');
-      spawn(destPath, ['--silent'], { detached: true, stdio: 'ignore' }).unref();
-      isQuitting = true;
-      app.quit();
-    }
+    const { spawn } = require('child_process');
+    spawn(destPath, ['--silent'], { detached: true, stdio: 'ignore' }).unref();
+    isQuitting = true;
+    app.quit();
   } catch (e) {
-    closeDownloadProgressWindow();
-    dialog.showMessageBox(mainWindow, {
-      type: 'error',
-      title: '下载失败',
-      message: String(e.message || e),
-    });
+    _downloadState.state = 'error';
+    _downloadState.errorMsg = String(e.message || e);
+    updateTrayMenu();
   }
 }
 
