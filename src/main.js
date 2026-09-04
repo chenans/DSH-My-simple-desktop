@@ -50,6 +50,7 @@ const settings = require('./lib/settings');
 const updateChecker = require('./lib/update-checker');
 const runtimeUpdater = require('./lib/runtime-updater');
 const pluginDeployer = require('./lib/plugin-deployer');
+const usageStats = require('./lib/usage-stats');
 
 const APP_NAME = 'DSH My Simple Desktop';
 const DEFAULT_PORT = 3080;
@@ -970,6 +971,16 @@ function createMainWindow(url) {
             });
           },
         },
+        { type: 'separator' },
+        {
+          label: '用量统计…',
+          click: () => openUsageWindow(),
+        },
+        {
+          label: '模型配置教程…',
+          click: () => openGuideWindow(),
+        },
+        { type: 'separator' },
         {
           label: '关于',
           click: () => {
@@ -1105,62 +1116,11 @@ function createMainWindow(url) {
     }
   });
 
-  // Inject a floating "📖 教程" button into the dsh SPA once it finishes loading.
-  // The preload script exposes dshDesktop.app.openGuide() to the page.
+  // Reset the renderer-crash reload flag when page finishes loading.
+  // (Previously the guide button was injected here; it has been moved to
+  //  the Help menu bar for a cleaner interface.)
   mainWindow.webContents.on('did-finish-load', () => {
-    // Reset the renderer-crash reload flag so a second crash can also be
-    // auto-reloaded (previously it was a one-shot that never reset).
     rendererReloaded = false;
-    mainWindow.webContents.executeJavaScript(`
-      (function() {
-        // Avoid duplicate injection on reload
-        if (document.getElementById('dsh-desktop-guide-btn')) return;
-
-        var btn = document.createElement('button');
-        btn.id = 'dsh-desktop-guide-btn';
-        btn.textContent = '📖 教程';
-        btn.title = '打开模型配置教程';
-        Object.assign(btn.style, {
-          position: 'fixed',
-          zIndex: '99999',
-          right: '16px',
-          bottom: '16px',
-          padding: '6px 14px',
-          fontSize: '13px',
-          fontWeight: '600',
-          fontFamily: '"Segoe UI", "Microsoft YaHei", sans-serif',
-          background: 'rgba(77, 107, 254, 0.85)',
-          color: '#fff',
-          border: 'none',
-          borderRadius: '8px',
-          cursor: 'pointer',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.25)',
-          backdropFilter: 'blur(4px)',
-          WebkitAppRegion: 'no-drag',
-          transition: 'opacity 0.2s, transform 0.2s',
-          opacity: '0.85',
-        });
-        btn.onmouseenter = function() { this.style.opacity = '1'; this.style.transform = 'scale(1.05)'; };
-        btn.onmouseleave = function() { this.style.opacity = '0.85'; this.style.transform = 'scale(1)'; };
-        btn.onclick = function() {
-          if (window.dshDesktop && window.dshDesktop.app && window.dshDesktop.app.openGuide) {
-            window.dshDesktop.app.openGuide();
-          }
-        };
-        document.body.appendChild(btn);
-
-        // Re-apply after SPA navigation (dsh SPA uses client-side routing)
-        var observer = new MutationObserver(function() {
-          if (!document.getElementById('dsh-desktop-guide-btn')) {
-            document.body.appendChild(btn);
-          }
-        });
-        observer.observe(document.body, { childList: true, subtree: false });
-      })();
-    `).catch(function(err) {
-      // ignore injection errors (e.g. restricted context)
-      log.warn('[inject] guide button injection failed: ' + err.message);
-    });
   });
 
   mainWindow.loadURL(url);
@@ -1392,6 +1352,26 @@ function openGuideWindow() {
   win.loadFile(path.join(__dirname, 'help', 'model-guide.html'));
 }
 
+function openUsageWindow() {
+  const win = new BrowserWindow({
+    width: 1000,
+    height: 750,
+    minWidth: 700,
+    minHeight: 500,
+    title: '用量统计 — ' + APP_NAME,
+    icon: ICON_PATH,
+    autoHideMenuBar: true,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1f1f1f' : '#ffffff',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  win.loadFile(path.join(__dirname, 'usage', 'usage.html'));
+}
+
 // ---------------------------------------------------------------------------
 // CLI / jump-list actions
 // ---------------------------------------------------------------------------
@@ -1464,6 +1444,9 @@ function registerIpc() {
     fn(`[renderer] ${message}`);
   });
   ipcMain.handle('app:open-guide', () => openGuideWindow());
+  ipcMain.handle('usage:get-stats', (_e, granularity, range) => {
+    return usageStats.getUsageStats(granularity, range);
+  });
 }
 
 // ---------------------------------------------------------------------------

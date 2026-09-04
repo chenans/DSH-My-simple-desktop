@@ -15,8 +15,8 @@ const path = require('path');
 const https = require('https');
 
 const REPO = 'chenans/DSH-My-simple-desktop';
-const TAG = 'v0.1.22';
-const VERSION = '0.1.22';
+const TAG = 'v0.1.23';
+const VERSION = '0.1.23';
 
 // --- Get token from git credential helper ---
 function getToken() {
@@ -142,18 +142,26 @@ async function main() {
     // 3. Create release
     console.log();
     console.log('[3/4] Creating new release...');
-    const releaseBody = `## v${VERSION} — 自动更新 + token URL 时序修复
+    const releaseBody = `## v${VERSION} — 用量统计 + 关闭行为设置 + 菜单栏优化
 
 ### 新增
 
-- **自动更新** — 菜单栏"帮助 → 检查更新"，从 GitHub Release 检查最新版本，用户确认后下载安装包，下载完成后重启自动安装
-  - 无新依赖，纯手写 GitHub API + 下载逻辑
-  - 支持进度提示，安装包下载到临时目录
-  - 退出时静默安装（\`--silent\` 参数）
+- **用量统计** — 菜单栏"帮助 → 用量统计"，按天/周/月/年/自动统计：
+  - 总会话数、总交互轮次、总操作步数
+  - Token 使用量（输入/输出/缓存读取/缓存写入）
+  - 按时间分布的柱状图
+  - 按项目统计的详细表格（会话数、交互数、Token、平均耗时、最后使用时间）
+  - 模型/Provider 余额信息
+  - 支持时间范围筛选（7天/30天/90天/1年/全部）
 
-### 修复
+- **关闭行为设置** — 设置窗口中将"关闭窗口时最小化到托盘"改为下拉选择框，可选"直接退出"或"隐藏到托盘"，更直观
 
-- **token URL 捕获时序** — dsh 0.1.2-rc.1+ 在 HTTP 健康检查通过后才输出 token URL，导致 Electron 窗口加载时用的还是裸 URL。修复：健康检查通过后额外等待 500ms，确保 token URL 已捕获
+- **菜单栏** — 按 \`Alt\` 键显示菜单栏，包含文件/编辑/视图/帮助四个菜单
+  - 帮助菜单包含：检查更新、用量统计、模型配置教程、关于
+
+### 优化
+
+- **去掉浮动教程按钮** — 教程入口从页面右下角浮动按钮移到菜单栏"帮助 → 模型配置教程"，界面更简洁
 
 ### 下载
 
@@ -168,13 +176,13 @@ async function main() {
 1. 下载对应版本的 Setup.exe
 2. 双击运行安装（如提示 SmartScreen，点击"仍要运行"）
 3. 安装完成后从开始菜单启动"DSH My Simple Desktop"
-4. 菜单栏"帮助 → 检查更新"即可自动升级到最新版
+4. **按 \`Alt\` 键**显示菜单栏，访问"帮助"菜单使用检查更新、用量统计、模型配置教程等功能
 
 > 完整版和插件版首次启动会自动部署 dsh 运行时到 \`%USERPROFILE%\\.dsh-desktop\`，请耐心等待进度条完成。`;
 
     const createResp = await apiCall('POST', 'releases', {
       tag_name: TAG,
-      name: `v${VERSION} — 自动更新 + token URL 时序修复`,
+      name: `v${VERSION} — 用量统计 + 关闭行为设置 + 菜单栏优化`,
       body: releaseBody,
       draft: false,
       prerelease: false,

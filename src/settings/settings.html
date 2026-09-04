@@ -69,10 +69,13 @@
 
   <div class="row">
     <div class="label">
-      <div class="name">关闭窗口时最小化到托盘</div>
-      <div class="desc">应用驻留系统托盘，从托盘菜单退出</div>
+      <div class="name">关闭窗口行为</div>
+      <div class="desc">选择点击窗口关闭按钮时的行为：隐藏到托盘（后台运行，dsh 服务不中断）或直接退出应用</div>
     </div>
-    <input type="checkbox" id="closeToTray" />
+    <select id="closeBehavior" style="padding:6px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--fg);font:inherit;cursor:pointer;">
+      <option value="exit">直接退出</option>
+      <option value="tray">隐藏到托盘</option>
+    </select>
   </div>
 
   <div class="row">
@@ -152,12 +155,12 @@ function applyTheme(dark) {
     (info && info.updateUrl ? ` · 更新源: ${info.updateUrl}` : ' · 未配置更新源');
 
   $('workspace').textContent = s.workspace || '（默认：用户主目录）';
-  $('closeToTray').checked = !!s.closeToTray;
+  $('closeBehavior').value = s.closeToTray ? 'tray' : 'exit';
   $('autoLaunch').checked = !!s.autoLaunch;
   $('checkUpdatesOnStart').checked = s.checkUpdatesOnStart !== false;
 
-  $('closeToTray').addEventListener('change', (e) =>
-    api.settings.set('closeToTray', e.target.checked));
+  $('closeBehavior').addEventListener('change', (e) =>
+    api.settings.set('closeToTray', e.target.value === 'tray'));
   $('autoLaunch').addEventListener('change', (e) =>
     api.settings.set('autoLaunch', e.target.checked));
   $('checkUpdatesOnStart').addEventListener('change', (e) =>

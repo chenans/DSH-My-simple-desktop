@@ -4,11 +4,11 @@
 [![Downloads](https://img.shields.io/github/downloads/chenans/DSH-My-simple-desktop/total)](https://github.com/chenans/DSH-My-simple-desktop/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-一个简单的 Windows 桌面壳：用 Electron 把 DeepSeek Harness 的 `dsh web` 界面封装成桌面应用，**内置 dsh 运行时 + 自动检查更新 + 模型配置教程**。
+一个简单的 Windows 桌面壳：用 Electron 把 DeepSeek Harness 的 `dsh web` 界面封装成桌面应用，**内置 dsh 运行时 + 自动检查更新 + 用量统计 + 模型配置教程**。
 
 > 适合团队内部使用，让没有 Node.js 环境或网络不好的同事也能直接双击运行 dsh。
 
-**English:** A minimal Electron wrapper for DeepSeek Harness (`dsh web`). Bundles a portable Node.js + dsh runtime so non-technical users can install and run dsh with zero dependencies. Features: auto dsh update check, crash recovery, system tray, close-guard (prevents accidental quit during LLM generation), model config guide. Windows x64 only.
+**English:** A minimal Electron wrapper for DeepSeek Harness (`dsh web`). Bundles a portable Node.js + dsh runtime so non-technical users can install and run dsh with zero dependencies. Features: auto-update via GitHub Release, usage statistics (tokens/sessions/projects), crash recovery, system tray, close-guard (prevents accidental quit during LLM generation), model config guide. Windows x64 only.
 
 ## 📥 直接下载
 
@@ -30,18 +30,27 @@
 - **启动引导** — 启动时弹出进度窗口，显示检测环境 → 安装环境 → 启动引擎 → 就绪，避免以为卡死
 - **智能 dsh 选择** — 系统有安装 dsh 就用系统的（优先最新版），没有就用内置的；系统 dsh 启动失败自动回退内置
 - **自动更新 dsh** — 每次启动后台检查 npm 上有无新版 @deepseek-ai/dsh，有则下载更新（不阻塞启动，失败跳过）
+- **自动更新桌面应用** — 菜单栏"帮助 → 检查更新"，从 GitHub Release 检查最新版本，确认后自动下载安装
+- **用量统计** — 菜单栏"帮助 → 用量统计"，按天/周/月/年/自动统计 token 使用量、会话数、交互轮次、项目分布
 - **崩溃恢复** — dsh 子进程崩溃自动重启（退避重试），渲染进程崩溃自动重载
 - **系统托盘** — 显示/隐藏窗口、打开工作区、设置、退出
 - **开机自启** — 登录 Windows 后后台静默启动（`--hidden` 参数）
-- **设置窗口** — 工作区目录、关闭行为、开机自启开关
-- **模型配置教程** — 内置图文教程，手把手教配置第三方 OpenAI 兼容网关
-- **崩溃恢复** — dsh 子进程崩溃自动重启（最多 5 次退避）
+- **设置窗口** — 工作区目录、关闭行为（隐藏到托盘/直接退出）、开机自启开关
+- **模型配置教程** — 菜单栏"帮助 → 模型配置教程"，内置图文教程，手把手教配置第三方 OpenAI 兼容网关
 - **单实例锁** — 防止重复启动
+
+## 菜单栏使用说明
+
+应用启用了 `autoHideMenuBar`，菜单栏默认隐藏。**按 `Alt` 键**即可临时显示菜单栏，包含：
+
+- **文件** — 退出
+- **编辑** — 撤销/重做/剪切/复制/粘贴
+- **视图** — 刷新/开发者工具/全屏
+- **帮助** — 检查更新 / 用量统计 / 模型配置教程 / 关于
 
 ## 不是什么
 
 - ❌ 不是 DeepSeek 官方产品
-- ❌ 没有自动更新桌面版本的功能（electron-updater 骨架保留但未接入更新源）
 - ❌ 没有崩溃信息上传
 - ❌ 没有多语言界面
 - ❌ 没有 MSIX 商店包
@@ -158,18 +167,20 @@ npm.cmd run dist:plugins    # 打包插件版 NSIS 安装包（含 dsh + 插件�
 
 ```
 ├─ src/
-│  ├─ main.js                 主进程（进程管理/托盘/IPC/生命周期）
+│  ├─ main.js                 主进程（进程管理/托盘/IPC/生命周期/菜单栏）
 │  ├─ preload.js              contextBridge
 │  ├─ splash/splash.html      启动引导页面
 │  ├─ help/model-guide.html   模型配置教程
 │  ├─ settings/settings.html  设置窗口
+│  ├─ usage/usage.html        用量统计窗口
 │  └─ lib/
 │     ├─ port.js              端口扫描
 │     ├─ settings.js          设置持久化
 │     ├─ dsh-resolve.js       dsh 命令解析（含 forceBundled 参数）
 │     ├─ runtime-updater.js   dsh 运行时自动更新（支持 DSH_DESKTOP_OFFLINE）
 │     ├─ plugin-deployer.js   插件版首次启动部署逻辑（幂等非破坏性）
-│     └─ updater.js           electron-updater 封装（未接入更新源）
+│     ├─ update-checker.js    GitHub Release 自动更新检查器
+│     └─ usage-stats.js       用量统计数据读取与聚合
 ├─ scripts/                   构建脚本
 │  ├─ snapshot-plugin-layer.mjs  插件快照核心模块（可单测）
 │  └─ build-plugin-layer.ps1     插件快照编排脚本

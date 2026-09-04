@@ -64,4 +64,9 @@ contextBridge.exposeInMainWorld('dshDesktop', {
       return () => ipcRenderer.removeListener('theme:changed', handler);
     },
   },
+
+  usage: {
+    getStats: (granularity, range) =>
+      ipcRenderer.invoke('usage:get-stats', granularity, range),
+  },
 });
