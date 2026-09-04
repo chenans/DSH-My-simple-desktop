@@ -104,6 +104,10 @@ let appRelaunches = (() => {
   return i >= 0 && process.argv[i + 1] ? Number(process.argv[i + 1]) || 0 : 0;
 })();
 let dshPort = null;
+// dsh 0.1.2-rc.1+ outputs a token-bearing URL on stdout ("dsh web: http://...?token=...").
+// Older versions output a bare URL without a query string.
+// We capture the full URL here so mainWindow.loadURL can use it regardless of version.
+let dshReadyUrl = null;
 // Cached preferSystem flag from initial bootstrap — reused on crash restart
 // so we don't lose the "prefer system dsh" semantic across restarts.
 let dshPreferSystem = false;
@@ -472,6 +476,7 @@ function killDshTree() {
 
   dshChild = null;
   dshPort = null;
+  dshReadyUrl = null;
 }
 
 /**
@@ -666,12 +671,23 @@ function startDsh(port, preferSystem) {
     log.warn(`[dsh-err] ${s.trimEnd()}`);
   };
   child.stderr.on('data', stderrListener);
-  child.stdout.on('data', (d) => log.info(`[dsh] ${String(d).trimEnd()}`));
+  child.stdout.on('data', (d) => {
+    const line = String(d).trimEnd();
+    log.info(`[dsh] ${line}`);
+    // Parse "dsh web: <url>" from stdout — dsh 0.1.2-rc.1+ appends ?token=...
+    // Capture the full URL so the Electron window can authenticate.
+    const match = line.match(/dsh web:\s*(\S+)/);
+    if (match) {
+      dshReadyUrl = match[1];
+      log.info(`[dsh] captured ready URL: ${dshReadyUrl}`);
+    }
+  });
 
   child.on('exit', (code, signal) => {
     const wasChild = dshChild === child;
     dshChild = null;
     dshPort = null;
+    dshReadyUrl = null;
 
     // Remove the stderr listener once the process is gone
     child.stderr.removeListener('data', stderrListener);
@@ -780,7 +796,9 @@ async function bootstrapDsh(preferSystem, timeoutMs) {
   }
   startDsh(port, preferSystem);
   await waitForHealthyUrl(port, timeoutMs || SERVER_TIMEOUT_MS);
-  return `http://127.0.0.1:${port}`;
+  // Prefer the token-bearing URL captured from dsh stdout (rc.1+).
+  // Fall back to the bare URL for older dsh versions that don't emit a token.
+  return dshReadyUrl || `http://127.0.0.1:${port}`;
 }
 
 // ---------------------------------------------------------------------------

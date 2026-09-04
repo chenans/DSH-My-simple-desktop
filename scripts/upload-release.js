@@ -15,8 +15,8 @@ const path = require('path');
 const https = require('https');
 
 const REPO = 'chenans/DSH-My-simple-desktop';
-const TAG = 'v0.1.19';
-const VERSION = '0.1.19';
+const TAG = 'v0.1.20';
+const VERSION = '0.1.20';
 
 // --- Get token from git credential helper ---
 function getToken() {
@@ -142,18 +142,11 @@ async function main() {
     // 3. Create release
     console.log();
     console.log('[3/4] Creating new release...');
-    const releaseBody = `## v${VERSION} — 简化插件重启 + F5 手动刷新 + GPU 节流
+    const releaseBody = `## v${VERSION} — 兼容 dsh 0.1.2-rc.1 token 鉴权
 
-### 改进
+### 修复
 
-- **简化插件重启机制** — 去掉 \`waitForHealthyUrl\` 60s 端口轮询，dsh 正常退出后延迟 3s \`reload()\` 一次，没起来按 F5 手动刷新
-- **F5 / Ctrl+R 手动刷新** — 拦截 \`before-input-event\`，用户可在手动启动 dsh 后按 F5 刷新页面
-- **GPU 节流** — 打包版启用 \`disable-gpu\` 单开关，省 ~150MB 内存，软件渲染仍可跑 CSS 动画
-- **崩溃恢复路径不变** — \`app.relaunch()\` + 上限 3 次重试，60s 稳定后重置计数器
-
-### 测试
-
-- 40/40 通过（plan-b-restart 8 个、relaunch-logic、pre-clean-lock 5 个）
+- **兼容 dsh 0.1.2-rc.1 token URL** — rc.1 版本启动后输出 \`dsh web: http://127.0.0.1:PORT/?token=...\`，Electron 窗口之前用裸 URL 访问被拒绝。现在从 dsh stdout 解析完整 URL（含 token），新旧版本兼容（有 token 用 token，无 token 回退裸 URL）
 
 ### 下载
 
@@ -173,7 +166,7 @@ async function main() {
 
     const createResp = await apiCall('POST', 'releases', {
       tag_name: TAG,
-      name: `v${VERSION} — 简化插件重启 + F5 手动刷新 + GPU 节流`,
+      name: `v${VERSION} — 兼容 dsh 0.1.2-rc.1 token 鉴权`,
       body: releaseBody,
       draft: false,
       prerelease: false,
