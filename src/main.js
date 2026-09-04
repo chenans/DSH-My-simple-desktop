@@ -55,9 +55,8 @@ const APP_NAME = 'DSH My Simple Desktop';
 const DEFAULT_PORT = 3080;
 const PORT_SCAN_LIMIT = 20;
 const SERVER_TIMEOUT_MS = 90_000;
-const DSH_MAX_RESTARTS = 5;
 const DSH_STARTUP_TIMEOUT_MS = 120_000; // 2 min for first boot (slower on some machines)
-const DSH_RESTART_TIMEOUT_MS = 90_000;  // 90s for restarts
+const APP_MAX_RELAUNCHES = 3; // 整应用重启上限，防死循环
 const ICON_PATH = path.join(__dirname, '..', 'assets', 'icon.png');
 const TRAY_ICON_PATH = path.join(__dirname, '..', 'assets', 'tray-icon.png');
 
@@ -99,7 +98,11 @@ let splashWindow = null;
 let tray = null;
 let dshChild = null;
 let isQuitting = false;
-let dshRestarts = 0;
+// 跨实例计数（通过 CLI 参数 --relaunch-count=N 传递，env 在 Windows 上不可靠）
+let appRelaunches = (() => {
+  const i = process.argv.indexOf('--relaunch-count');
+  return i >= 0 && process.argv[i + 1] ? Number(process.argv[i + 1]) || 0 : 0;
+})();
 let dshPort = null;
 // Cached preferSystem flag from initial bootstrap — reused on crash restart
 // so we don't lose the "prefer system dsh" semantic across restarts.
@@ -472,6 +475,77 @@ function killDshTree() {
 }
 
 /**
+ * Force-remove the dsh task-board lock file on Windows.
+ * dsh uses openSync(file, "wx", 0o600) + chmodSync(0o600) for its lock.
+ * When dsh is killed (taskkill /F), the lock file remains with restrictive
+ * permissions.  On Windows, 0o600 maps to "owner only" ACL which can cause
+ * EPERM on subsequent openSync/unlinkSync calls.
+ *
+ * This function uses a multi-layer approach:
+ *   1. icacls to grant full control to current user
+ *   2. attrib -r to clear read-only flag
+ *   3. fs.unlinkSync
+ *   4. del /f /q as final fallback
+ *   5. Retry with increasing delays between attempts
+ *
+ * @param {string} lockFile - Absolute path to ledger-v2.lock
+ * @param {object} [opts] - { maxRetries=5, baseDelayMs=200, log:log }
+ * @returns {boolean} true if lock file is gone (or was never there)
+ */
+function forceRemoveLockFile(lockFile, opts) {
+  const { maxRetries = 5, baseDelayMs = 200, log: logRef = log } = opts || {};
+  const { execSync } = require('node:child_process');
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    if (!fs.existsSync(lockFile)) return true;
+
+    // Layer 1: icacls — reset ACL to grant full control
+    if (process.platform === 'win32') {
+      try {
+        execSync(`icacls "${lockFile}" /grant "*S-1-5-32-544:F" "*S-1-1-0:F"`,
+          { stdio: 'ignore', windowsHide: true, timeout: 3000 });
+      } catch {}
+      // Layer 2: attrib -r — clear read-only / hidden / system flags
+      try {
+        execSync(`attrib -r -h -s "${lockFile}"`,
+          { stdio: 'ignore', windowsHide: true, timeout: 2000 });
+      } catch {}
+    }
+
+    // Layer 3: fs.unlinkSync
+    try {
+      fs.unlinkSync(lockFile);
+      logRef.info(`force-removed lock file ${lockFile} (attempt ${attempt})`);
+      return true;
+    } catch (e) {
+      logRef.warn(`could not remove lock (attempt ${attempt}): ${e.message}`);
+    }
+
+    // Layer 4: del /f /q — Windows shell delete
+    if (process.platform === 'win32') {
+      try {
+        execSync(`del /f /q "${lockFile}"`,
+          { stdio: 'ignore', windowsHide: true, timeout: 2000 });
+      } catch {}
+      if (!fs.existsSync(lockFile)) {
+        logRef.info(`force-removed lock file ${lockFile} via del (attempt ${attempt})`);
+        return true;
+      }
+    }
+
+    // Wait before next retry (increasing delay: 200ms, 400ms, 600ms, 800ms, ...)
+    if (attempt < maxRetries) {
+      const delay = baseDelayMs * attempt;
+      try { execSync(`ping 127.0.0.1 -n 1 -w ${delay} >nul`,
+        { stdio: 'ignore', windowsHide: true, timeout: delay + 1000 }); } catch {}
+    }
+  }
+
+  // Final check
+  return !fs.existsSync(lockFile);
+}
+
+/**
  * Healthy-url check: attempts a HEAD / to confirm the server is alive.
  * @param {number} port
  * @param {number} timeoutMs
@@ -524,6 +598,25 @@ function waitForHealthyUrl(port, timeoutMs) {
 }
 
 function startDsh(port, preferSystem) {
+  // Pre-clean stale lock files BEFORE spawning dsh.
+  // dsh's acquireLock uses openSync(file, "wx", 0o600) + chmodSync(0o600).
+  // When dsh is killed (taskkill /F), the lock file remains with restrictive
+  // permissions, causing EPERM on the next launch.  We use forceRemoveLockFile
+  // which resets ACLs via icacls before deleting, ensuring a clean slate.
+  try {
+    const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+    const lockFile = path.join(dshHome, 'task-board', 'ledger-v2.lock');
+    if (fs.existsSync(lockFile)) {
+      const removed = forceRemoveLockFile(lockFile, { maxRetries: 3, baseDelayMs: 150 });
+      if (removed) {
+        log.info(`pre-cleaned stale lock file ${lockFile}`);
+      } else {
+        log.warn(`pre-clean lock failed: could not remove ${lockFile}`);
+      }
+    }
+  } catch (e) {
+    log.warn(`pre-clean lock failed: ${e.message}`);
+  }
   // Plugins edition: always use bundled dsh, never system dsh.
   const isPlugins = app.isPackaged &&
     pluginDeployer.isPluginsEdition(process.resourcesPath);
@@ -591,73 +684,85 @@ function startDsh(port, preferSystem) {
     // Build a diagnostics message from early stderr if available
     let diagnostic = '';
     if (earlyStderr.length > 0) {
-      // Trim to last ~500 chars for a concise error reason
       const tail = earlyStderr.slice(-500).trim();
       diagnostic = tail ? `：${tail}` : '';
     }
 
-    if (code === 0) {
-      // Clean exit (e.g. server asked to stop) — nothing to restart.
-      app.quit();
-      return;
-    }
+    // ── 重启策略 ──────────────────────────────────────────────────────────
+    //
+    // 简化方案：dsh 退出时区分"正常退出"和"崩溃"。
+    //
+    // 1) 正常退出 (code=0 或 SIGTERM — 插件重启):
+    //    dsh-market helper 会 spawn 新 dsh。Electron 不退出，
+    //    延迟 3 秒后 reload 一次页面。如果此时 dsh 还没起来，
+    //    页面会显示加载失败，用户按 F5 手动刷新即可。
+    //
+    // 2) 崩溃 (code≠0 且非 SIGTERM):
+    //    app.relaunch() + app.exit(0)，整应用重启。
+    //    递增计数器，APP_MAX_RELAUNCHES 次后停止。
+    const isCleanExit = code === 0 || (code === null && signal === 'SIGTERM');
 
-    // Crash: restart with backoff (1s, 2s, 4s, 8s, 16s → give up).
-    // preferSystem is reused from the initial bootstrap (dshPreferSystem),
-    // and the restart timeout is DSH_RESTART_TIMEOUT_MS.
-
-    if (dshRestarts < DSH_MAX_RESTARTS) {
-      dshRestarts += 1;
-      const delay = Math.min(2 ** (dshRestarts - 1), 16) * 1000;
-      log.warn(`dsh crashed (${exitInfo}); restart ${dshRestarts}/${DSH_MAX_RESTARTS} in ${delay}ms${diagnostic}`);
-      sendSplashProgress('DSH 引擎正在重启…', {
-        sub: `第 ${dshRestarts}/${DSH_MAX_RESTARTS} 次重启（${Math.round(delay / 1000)}s 后）`,
-        progress: 50 + Math.round((dshRestarts / DSH_MAX_RESTARTS) * 30),
-        type: 'warn',
-      });
+    if (isCleanExit) {
+      log.info(`dsh exited (${exitInfo}); will reload window in 3s`);
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('app:event', {
           type: 'dsh-restarting',
-          payload: { attempt: dshRestarts, max: DSH_MAX_RESTARTS, delay, diagnostic: earlyStderr.slice(-300) },
+          payload: { reason: 'plugin-restart' },
         });
       }
+      const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+      const lockFile = path.join(dshHome, 'task-board', 'ledger-v2.lock');
+      forceRemoveLockFile(lockFile, { maxRetries: 5, baseDelayMs: 300 });
       setTimeout(() => {
-        if (isQuitting) return;
-        // Before restarting: clean up stale locks and kill any surviving
-        // dsh process tree from the crashed instance. Without this, the
-        // new dsh will fail to acquire the task-board ledger lock and
-        // crash again, entering a restart loop.
-        cleanupDshLocks();
-        killDshTree();
-        bootstrapDsh(dshPreferSystem, DSH_RESTART_TIMEOUT_MS).then(() => {
-          // Restart succeeded — reset the crash counter so the next
-          // crash starts from 1/5 again, not accumulating.
-          dshRestarts = 0;
-          log.info('dsh restart succeeded; dshRestarts reset to 0');
-        }).catch((err) => {
-          log.error('dsh restart failed', err);
-          // Kill any orphan processes from the failed restart attempt
-          // to avoid port conflicts on the next retry.
-          killDshTree();
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('app:event', {
-              type: 'dsh-fatal',
-              payload: { message: String(err.message || err) },
-            });
-          }
-        });
-      }, delay);
-    } else {
-      log.error(`dsh keeps crashing; giving up${diagnostic}`);
-      const detail = earlyStderr.length > 0
-        ? `\n\n最后一次崩溃的 stderr 输出（末尾）：\n${earlyStderr.slice(-500)}`
-        : '';
-      dialog.showErrorBox(
-        APP_NAME,
-        `dsh web 进程连续崩溃（${DSH_MAX_RESTARTS} 次），请检查日志。${detail}`,
-      );
-      app.quit();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          log.info('reloading window after dsh restart');
+          mainWindow.webContents.reload();
+        }
+      }, 3000);
+      return;
     }
+
+    // ── Plan A: 崩溃 → 整应用 relaunch ──
+    if (appRelaunches < APP_MAX_RELAUNCHES) {
+      appRelaunches += 1;
+      log.warn(`dsh exited (${exitInfo}); full app relaunch ${appRelaunches}/${APP_MAX_RELAUNCHES}${diagnostic}`);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('app:event', {
+          type: 'dsh-relaunching',
+          payload: { attempt: appRelaunches, max: APP_MAX_RELAUNCHES, diagnostic: earlyStderr.slice(-300) },
+        });
+      }
+      // Kill the dsh process tree FIRST so Windows releases file handles.
+      killDshTree();
+      // Force-remove lock file — dsh's chmodSync(0o600) makes the lock file
+      // hard to delete on Windows after taskkill /F.  Use forceRemoveLockFile
+      // which resets ACLs via icacls before deleting.
+      const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
+      const lockFile = path.join(dshHome, 'task-board', 'ledger-v2.lock');
+      forceRemoveLockFile(lockFile, { maxRetries: 5, baseDelayMs: 300 });
+      // Strip --hidden and old --relaunch-count so the new instance starts clean.
+      const relaunchArgs = process.argv.slice(1)
+        .filter((a) => a !== '--hidden')
+        .filter((a, i, arr) => !(a === '--relaunch-count' || (i > 0 && arr[i - 1] === '--relaunch-count')));
+      relaunchArgs.push('--relaunch-count', String(appRelaunches));
+      // Delay relaunch to let Windows fully release file handles (crash path:
+      // taskkill /F or segfault — Windows needs 2-3s to release file handles).
+      setTimeout(() => {
+        app.relaunch({ args: relaunchArgs });
+        app.exit(0);
+      }, 3000);
+      return;
+    }
+
+    log.error(`dsh keeps crashing; giving up after ${APP_MAX_RELAUNCHES} app relaunches${diagnostic}`);
+    const detail = earlyStderr.length > 0
+      ? `\n\n最后一次崩溃的 stderr 输出（末尾）：\n${earlyStderr.slice(-500)}`
+      : '';
+    dialog.showErrorBox(
+      APP_NAME,
+      `dsh web 进程连续异常退出（已自动重启应用 ${APP_MAX_RELAUNCHES} 次），请检查日志。${detail}`,
+    );
+    app.quit();
   });
   return child;
 }
@@ -765,6 +870,7 @@ function createMainWindow(url) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      backgroundThrottling: true,
     },
   });
 
@@ -850,6 +956,15 @@ function createMainWindow(url) {
     log.error(`renderer gone (${details.reason})`);
     if (!rendererReloaded && !isQuitting) {
       rendererReloaded = true;
+      mainWindow.webContents.reload();
+    }
+  });
+
+  // F5 / Ctrl+R manual reload — lets user refresh after manually restarting dsh
+  mainWindow.webContents.on('before-input-event', (_e, input) => {
+    if (input.type === 'keyDown' && (input.key === 'F5' ||
+        (input.key === 'r' && (input.control || input.meta)))) {
+      log.info('manual reload (F5/Ctrl+R)');
       mainWindow.webContents.reload();
     }
   });
@@ -1258,6 +1373,15 @@ if (!gotLock) {
     showMainWindow();
   });
 
+  // ── GPU throttling ───────────────────────────────────────────────────────
+  // This is a thin shell that loads localhost — no need for GPU acceleration.
+  // disable-gpu kills the GPU process entirely (~150 MB saved, no fan spin).
+  // Software rendering still handles CSS animations (e.g. Deep Current's
+  // background-position keyframes) just fine.
+  if (app.isPackaged) {
+    app.commandLine.appendSwitch('disable-gpu');
+  }
+
   app.whenReady().then(async () => {
     initSettings();
 
@@ -1483,12 +1607,16 @@ if (!gotLock) {
 
     // 步骤 4：创建主窗口
     createMainWindow(appUrl);
-    dshRestarts = 0;
     // 主窗口就绪后延迟关闭 splash，让用户能看到 splash 完成态
     mainWindow.once('ready-to-show', () => {
       // 先更新 splash 为完成状态，1.5 秒后再关闭
       sendSplashProgress('启动完成！', { type: 'done', progress: 100 });
       setTimeout(() => { closeSplashWindow(); }, 1500);
+      // 稳定运行后重置整应用重启计数，防止长期使用中一次偶发崩溃消耗重启预算
+      setTimeout(() => {
+        appRelaunches = 0;
+        log.info('app stable for 60s — relaunch counter reset');
+      }, 60_000);
     });
 
     if (isSmoke) {
