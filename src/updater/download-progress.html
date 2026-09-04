@@ -46,6 +46,7 @@
   .done .icon { font-size: 32px; margin-bottom: 8px; }
   .done .msg { font-size: 14px; }
   .error { text-align: center; padding: 20px 0; color: #cf222e; }
+  .retry { text-align: center; padding: 8px 0; color: var(--warn, #9a6700); font-size: 13px; }
 </style>
 </head>
 <body>
@@ -61,6 +62,7 @@
       <span id="speed">—</span>
       <span id="size">—</span>
     </div>
+    <div class="retry" id="retryInfo" style="display:none;"></div>
   </div>
 
   <div id="doneView" style="display:none;">
@@ -86,6 +88,20 @@ let lastTime = 0;
 let lastBytes = 0;
 
 ipcRenderer.on('update-download-progress', (_e, data) => {
+  // Special signal: retry (done=-1, total=attempt number)
+  if (data.done === -1) {
+    $('retryInfo').style.display = 'block';
+    $('retryInfo').textContent = `下载失败，正在重试（第 ${data.total + 1} 次）…`;
+    $('bar').style.width = '0%';
+    $('pct').textContent = '0%';
+    $('speed').textContent = '—';
+    $('size').textContent = '—';
+    lastTime = 0;
+    lastBytes = 0;
+    return;
+  }
+
+  $('retryInfo').style.display = 'none';
   const pct = data.percent || 0;
   $('bar').style.width = pct + '%';
   $('pct').textContent = pct + '%';

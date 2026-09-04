@@ -1436,6 +1436,18 @@ function createDownloadProgressWindow() {
  * Send download progress to the progress window.
  */
 function sendDownloadProgress(done, total) {
+  if (done === -1) {
+    // Retry signal: done=-1, total=attempt number
+    if (_downloadProgressWin && !_downloadProgressWin.isDestroyed()) {
+      _downloadProgressWin.webContents.send('update-download-progress', {
+        done: -1,
+        total: total,
+        percent: 0,
+      });
+    }
+    return;
+  }
+
   const progress = total > 0 ? Math.round((done / total) * 100) : 0;
   if (_downloadProgressWin && !_downloadProgressWin.isDestroyed()) {
     _downloadProgressWin.webContents.send('update-download-progress', {

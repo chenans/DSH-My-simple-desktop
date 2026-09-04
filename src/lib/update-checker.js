@@ -243,16 +243,48 @@ async function checkForUpdate() {
 }
 
 /**
- * Download installer and return the path.
+ * Download installer with retry logic.
+ * Retries up to 3 times on network errors / timeouts, with 5s delay between attempts.
  * @param {string} url
  * @param {(progress: number, total: number) => void} onProgress
+ * @param {object} [opts] - { maxRetries=3, retryDelay=5000 }
  * @returns {Promise<string>} path to downloaded installer
  */
-function downloadInstaller(url, onProgress) {
+async function downloadInstaller(url, onProgress, opts = {}) {
+  const maxRetries = opts.maxRetries != null ? opts.maxRetries : 3;
+  const retryDelay = opts.retryDelay != null ? opts.retryDelay : 5000;
+
   const tempDir = os.tmpdir();
   const fileName = path.basename(new URL(url).pathname);
   const destPath = path.join(tempDir, fileName);
-  return downloadFile(url, destPath, onProgress);
+
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      // Reset progress for retry
+      if (attempt > 1 && onProgress) {
+        onProgress(0, 0);
+      }
+
+      const result = await downloadFile(url, destPath, onProgress);
+      return result;
+    } catch (e) {
+      lastError = e;
+      // Clean up partial file
+      try { fs.unlinkSync(destPath); } catch {}
+
+      if (attempt < maxRetries) {
+        // Notify progress window about retry
+        if (onProgress) onProgress(-1, attempt); // special signal: retry
+
+        // Wait before retry
+        await new Promise(r => setTimeout(r, retryDelay));
+      }
+    }
+  }
+
+  throw lastError || new Error('Download failed after retries');
 }
 
 module.exports = {
