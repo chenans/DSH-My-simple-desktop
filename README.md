@@ -4,11 +4,11 @@
 [![Downloads](https://img.shields.io/github/downloads/chenans/DSH-My-simple-desktop/total)](https://github.com/chenans/DSH-My-simple-desktop/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-一个简单的 Windows 桌面壳：用 Electron 把 DeepSeek Harness 的 `dsh web` 界面封装成桌面应用，**内置 dsh 运行时 + 自动检查更新 + 用量统计 + 模型配置教程**。
+一个简单的 Windows 桌面壳：用 Electron 把 DeepSeek Harness 的 `dsh web` 界面封装成桌面应用，**内置 dsh 运行时 + 自动检查更新 + 下载进度窗口 + 自动重试 + 用量统计（按模型/Provider） + 模型配置教程**。
 
 > 适合团队内部使用，让没有 Node.js 环境或网络不好的同事也能直接双击运行 dsh。
 
-**English:** A minimal Electron wrapper for DeepSeek Harness (`dsh web`). Bundles a portable Node.js + dsh runtime so non-technical users can install and run dsh with zero dependencies. Features: auto-update via GitHub Release, usage statistics (tokens/sessions/projects), crash recovery, system tray, close-guard (prevents accidental quit during LLM generation), model config guide. Windows x64 only.
+**English:** A minimal Electron wrapper for DeepSeek Harness (`dsh web`). Bundles a portable Node.js + dsh runtime so non-technical users can install and run dsh with zero dependencies. Features: auto-update via GitHub Release with download progress window and auto-retry, usage statistics (tokens by model/provider/sessions/projects), crash recovery, system tray, close-guard (prevents accidental quit during LLM generation), model config guide. Windows x64 only.
 
 ## 📥 直接下载
 
@@ -16,9 +16,9 @@
 
 | 版本 | 下载 | 大小 | 适用人群 |
 |------|------|------|---------|
-| **完整版** | [DSH.My.Simple.Desktop-0.1.18-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.18/DSH.My.Simple.Desktop-0.1.18-Setup.exe) | 151.8 MB | 没装 dsh / 离线环境，**无需任何预装**，开箱即用 |
-| **精简版** | [DSH.My.Simple.Desktop-0.1.18-Lite-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.18/DSH.My.Simple.Desktop-0.1.18-Lite-Setup.exe) | 81.5 MB | 本地已装 dsh 的用户，安装快 |
-| **插件版** | [DSH.My.Simple.Desktop-0.1.18-Plugins-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.18/DSH.My.Simple.Desktop-0.1.18-Plugins-Setup.exe) | 278.3 MB | 内网/离线团队分发，内置作者预设的 dsh 插件与 agent-presets 快照，同事装完即用无需自行配置插件 |
+| **完整版** | [DSH.My.Simple.Desktop-0.1.29-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.29/DSH.My.Simple.Desktop-0.1.29-Setup.exe) | 151.8 MB | 没装 dsh / 离线环境，**无需任何预装**，开箱即用 |
+| **精简版** | [DSH.My.Simple.Desktop-0.1.29-Lite-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.29/DSH.My.Simple.Desktop-0.1.29-Lite-Setup.exe) | 81.5 MB | 本地已装 dsh 的用户，安装快 |
+| **插件版** | [DSH.My.Simple.Desktop-0.1.29-Plugins-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.29/DSH.My.Simple.Desktop-0.1.29-Plugins-Setup.exe) | 278.4 MB | 内网/离线团队分发，内置作者预设的 dsh 插件与 agent-presets 快照，同事装完即用无需自行配置插件 |
 
 - **完整版**：内置完整 dsh 运行时（node.exe + 全部依赖），首次启动自动安装环境到 `%USERPROFILE%\.dsh-desktop` 并加入命令行 PATH；每次启动自动检查 dsh 更新
 - **精简版**：使用系统已安装的 dsh；若系统没有 dsh 会提示安装 dsh 或改用完整版
@@ -30,8 +30,18 @@
 - **启动引导** — 启动时弹出进度窗口，显示检测环境 → 安装环境 → 启动引擎 → 就绪，避免以为卡死
 - **智能 dsh 选择** — 系统有安装 dsh 就用系统的（优先最新版），没有就用内置的；系统 dsh 启动失败自动回退内置
 - **自动更新 dsh** — 每次启动后台检查 npm 上有无新版 @deepseek-ai/dsh，有则下载更新（不阻塞启动，失败跳过）
-- **自动更新桌面应用** — 菜单栏"帮助 → 检查更新"，从 GitHub Release 检查最新版本，确认后自动下载安装
-- **用量统计** — 菜单栏"帮助 → 用量统计"，按天/周/月/年/自动统计 token 使用量、会话数、交互轮次、项目分布
+- **自动更新桌面应用** — 三种触发方式：
+  - 菜单栏"帮助 → 检查更新"手动检查
+  - 启动后 30 秒自动检查 GitHub Release
+  - 每 4 小时定时轮询，发现新版本右下角弹窗通知
+- **下载进度窗口** — 下载更新时显示进度条、已下载/总大小、下载速度；下载失败自动重试（最多 3 次，间隔 5 秒）
+- **用量统计** — 菜单栏"帮助 → 用量统计"：
+  - 读取 `~/.dsh/dsh-usage/usage-ledger.json`，统计真实 Token 使用量
+  - 按模型统计（如 scnet-base/GLM-5-Base）：输入/输出/缓存读取/缓存写入 Token + 调用次数
+  - 按 Provider 统计：各 Provider 的 Token 使用量 + 余额
+  - 按时间分布柱状图（粒度：天/周/月/年/自动）
+  - 按项目统计表格（会话数、交互轮次、Token、最后使用时间）
+  - 时间范围筛选：全部 / 7天 / 30天 / 90天 / 1年 / **自定义日期范围**（含本月/上月/今年/去年快捷按钮）
 - **崩溃恢复** — dsh 子进程崩溃自动重启（退避重试），渲染进程崩溃自动重载
 - **系统托盘** — 显示/隐藏窗口、打开工作区、设置、退出
 - **开机自启** — 登录 Windows 后后台静默启动（`--hidden` 参数）
@@ -173,6 +183,7 @@ npm.cmd run dist:plugins    # 打包插件版 NSIS 安装包（含 dsh + 插件�
 │  ├─ help/model-guide.html   模型配置教程
 │  ├─ settings/settings.html  设置窗口
 │  ├─ usage/usage.html        用量统计窗口
+│  ├─ updater/download-progress.html  下载更新进度窗口
 │  └─ lib/
 │     ├─ port.js              端口扫描
 │     ├─ settings.js          设置持久化
