@@ -15,8 +15,8 @@ const path = require('path');
 const https = require('https');
 
 const REPO = 'chenans/DSH-My-simple-desktop';
-const TAG = 'v0.1.29';
-const VERSION = '0.1.29';
+const TAG = 'v0.1.30';
+const VERSION = '0.1.30';
 
 // --- Get token from git credential helper ---
 function getToken() {

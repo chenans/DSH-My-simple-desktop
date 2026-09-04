@@ -1348,6 +1348,7 @@ function openGuideWindow() {
     icon: ICON_PATH,
     autoHideMenuBar: true,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1f1f1f' : '#ffffff',
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -1355,6 +1356,7 @@ function openGuideWindow() {
       sandbox: true,
     },
   });
+  win.once('ready-to-show', () => win.show());
   win.loadFile(path.join(__dirname, 'help', 'model-guide.html'));
 }
 
@@ -1368,6 +1370,7 @@ function openUsageWindow() {
     icon: ICON_PATH,
     autoHideMenuBar: true,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#1f1f1f' : '#ffffff',
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -1375,6 +1378,7 @@ function openUsageWindow() {
       sandbox: true,
     },
   });
+  win.once('ready-to-show', () => win.show());
   win.loadFile(path.join(__dirname, 'usage', 'usage.html'));
 }
 
