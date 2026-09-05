@@ -1130,22 +1130,47 @@ function buildTrayMenu() {
       click: () => shell.openPath(workspaceDir()),
     },
     {
+      label: '用量统计…',
+      click: () => openUsageWindow(),
+    },
+    {
+      label: '模型配置教程…',
+      click: () => openGuideWindow(),
+    },
+    {
       label: '设置…',
       click: () => openSettingsWindow(),
     },
   ];
 
-  // Download state menu items
+  // Update / download state menu items (with submenu for details)
   if (_downloadState) {
     if (_downloadState.state === 'downloading') {
       const pct = _downloadState.percent || 0;
       const retry = _downloadState.retryAttempt || 0;
-      items.push({
+      const subMenu = [
+        { label: `进度：${pct}%`, enabled: false },
+        { label: retry > 0 ? `正在重试（第 ${retry} 次）` : '下载中…', enabled: false },
+        { type: 'separator' },
+        {
+          label: '查看下载详情…',
+          click: () => showDownloadProgressWindow(),
+        },
+        {
+          label: '取消下载',
+          click: () => {
+            _downloadState.state = 'cancelled';
+            updateTrayMenu();
+          },
+        },
+      ];
+      items.push({ type: 'separator' }, {
         label: `下载更新 ${pct}%${retry > 0 ? `（重试 ${retry} 次）` : ''}`,
-        enabled: false,
+        click: () => showDownloadProgressWindow(),
+        submenu: subMenu,
       });
     } else if (_downloadState.state === 'done') {
-      items.push({
+      items.push({ type: 'separator' }, {
         label: '更新已下载，准备安装',
         enabled: false,
       }, {
@@ -1161,7 +1186,7 @@ function buildTrayMenu() {
         },
       });
     } else if (_downloadState.state === 'error') {
-      items.push({
+      items.push({ type: 'separator' }, {
         label: '下载失败',
         enabled: false,
       }, {
@@ -1192,9 +1217,25 @@ function buildTrayMenu() {
           }
         },
       });
+    } else if (_downloadState.state === 'cancelled') {
+      items.push({ type: 'separator' }, {
+        label: '下载已取消',
+        enabled: false,
+      }, {
+        label: '重新下载',
+        click: () => {
+          if (_downloadState.downloadUrl) {
+            _downloadState.state = 'downloading';
+            _downloadState.retryAttempt = 0;
+            _downloadState.percent = 0;
+            updateTrayMenu();
+            promptDownloadUpdate(_downloadState.latestVersion, _downloadState.downloadUrl, _downloadState.assetName);
+          }
+        },
+      });
     }
   } else {
-    items.push({
+    items.push({ type: 'separator' }, {
       label: '检查更新…',
       click: async () => {
         const result = await updateChecker.checkForUpdate();
@@ -1274,12 +1315,15 @@ function updateTrayMenu() {
       tray.setToolTip(`${APP_NAME} — 更新已下载，准备安装`);
     } else if (_downloadState.state === 'error') {
       tray.setToolTip(`${APP_NAME} — 下载更新失败`);
+    } else if (_downloadState.state === 'cancelled') {
+      tray.setToolTip(`${APP_NAME} — 下载已取消`);
     }
   } else {
     tray.setToolTip(APP_NAME);
   }
 
   tray.setContextMenu(buildTrayMenu());
+  sendProgressToWindow();
 }
 
 // ---------------------------------------------------------------------------
@@ -1454,6 +1498,60 @@ function showUpdateNotification(latestVersion, downloadUrl, assetName) {
   notif.show();
 }
 
+let _downloadProgressWin = null;
+
+/**
+ * Show a download progress window that reflects _downloadState.
+ * Can be opened repeatedly; closing it does NOT cancel the download.
+ */
+function showDownloadProgressWindow() {
+  if (_downloadProgressWin && !_downloadProgressWin.isDestroyed()) {
+    _downloadProgressWin.show();
+    _downloadProgressWin.focus();
+    return;
+  }
+
+  _downloadProgressWin = new BrowserWindow({
+    width: 440,
+    height: 280,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    title: '下载更新',
+    icon: ICON_PATH,
+    autoHideMenuBar: true,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#1f1f1f' : '#ffffff',
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  _downloadProgressWin.once('ready-to-show', () => {
+    _downloadProgressWin.show();
+    sendProgressToWindow();
+  });
+  _downloadProgressWin.on('closed', () => { _downloadProgressWin = null; });
+  _downloadProgressWin.loadFile(path.join(__dirname, 'updater', 'download-progress.html'));
+}
+
+/**
+ * Push current _downloadState to the progress window (if open).
+ */
+function sendProgressToWindow() {
+  if (!_downloadProgressWin || _downloadProgressWin.isDestroyed()) return;
+  _downloadProgressWin.webContents.send('download:state', {
+    state: _downloadState ? _downloadState.state : 'idle',
+    percent: _downloadState ? _downloadState.percent : 0,
+    retryAttempt: _downloadState ? _downloadState.retryAttempt : 0,
+    latestVersion: _downloadState ? _downloadState.latestVersion : null,
+    errorMsg: _downloadState ? _downloadState.errorMsg : null,
+  });
+}
+
 /**
  * Prompt user to download and install the update.
  * Reuses the same flow as the menu "检查更新" action.
@@ -1475,6 +1573,7 @@ async function promptDownloadUpdate(latestVersion, downloadUrl, assetName) {
     retryAttempt: 0,
   };
   updateTrayMenu();
+  showDownloadProgressWindow();
 
   try {
     const { destPath } = await updateChecker.downloadInstaller(downloadUrl, (done, total, retryAttempt) => {
@@ -1579,6 +1678,23 @@ function registerIpc() {
   ipcMain.handle('app:open-guide', () => openGuideWindow());
   ipcMain.handle('usage:get-stats', (_e, granularity, range) => {
     return usageStats.getUsageStats(granularity, range);
+  });
+  ipcMain.handle('download:install', () => {
+    if (_downloadState && _downloadState.state === 'done' && _downloadState.destPath) {
+      const { spawn } = require('child_process');
+      spawn(_downloadState.destPath, ['--silent'], { detached: true, stdio: 'ignore' }).unref();
+      isQuitting = true;
+      app.quit();
+    }
+  });
+  ipcMain.handle('download:retry', () => {
+    if (_downloadState && _downloadState.downloadUrl) {
+      _downloadState.state = 'downloading';
+      _downloadState.retryAttempt = 0;
+      _downloadState.percent = 0;
+      updateTrayMenu();
+      promptDownloadUpdate(_downloadState.latestVersion, _downloadState.downloadUrl, _downloadState.assetName);
+    }
   });
 }
 

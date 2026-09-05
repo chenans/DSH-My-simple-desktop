@@ -69,4 +69,14 @@ contextBridge.exposeInMainWorld('dshDesktop', {
     getStats: (granularity, range) =>
       ipcRenderer.invoke('usage:get-stats', granularity, range),
   },
+
+  download: {
+    onState: (cb) => {
+      const handler = (_e, payload) => cb(payload);
+      ipcRenderer.on('download:state', handler);
+      return () => ipcRenderer.removeListener('download:state', handler);
+    },
+    install: () => ipcRenderer.invoke('download:install'),
+    retry: () => ipcRenderer.invoke('download:retry'),
+  },
 });

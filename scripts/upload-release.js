@@ -15,8 +15,8 @@ const path = require('path');
 const https = require('https');
 
 const REPO = 'chenans/DSH-My-simple-desktop';
-const TAG = 'v0.1.43';
-const VERSION = '0.1.43';
+const TAG = 'v0.1.44';
+const VERSION = '0.1.44';
 
 // --- Get token from git credential helper ---
 function getToken() {
@@ -142,11 +142,14 @@ async function main() {
     // 3. Create release
     console.log();
     console.log('[3/4] Creating new release...');
-    const releaseBody = `## v${VERSION} — 用量统计图表悬浮提示
+    const releaseBody = `## v${VERSION} — 托盘菜单增强 + 下载进度窗口
 
 ### 新增
 
-- **按时间分布图表悬浮提示** — 鼠标悬浮柱状图区域时显示自定义 Tooltip，包含：时段、总 Token、调用次数、会话/轮次/步数、折线数据（会话数或调用次数）
+- **托盘菜单新增"用量统计"和"模型配置教程"入口** — 无需打开主窗口，直接从托盘菜单访问
+- **下载更新二级菜单** — 下载中时托盘菜单显示"下载更新 X%"，点击可打开进度窗口，右键展开子菜单查看详情/取消下载
+- **可反复查看的下载进度窗口** — 下载开始时自动弹出，关闭窗口不影响下载，可从托盘菜单反复打开查看
+- **下载取消功能** — 托盘子菜单中可取消下载，取消后可重新下载
 
 ### 下载
 
@@ -166,7 +169,7 @@ async function main() {
 
     const createResp = await apiCall('POST', 'releases', {
       tag_name: TAG,
-      name: `v${VERSION} — 用量统计图表悬浮提示`,
+      name: `v${VERSION} — 托盘菜单增强 + 下载进度窗口`,
       body: releaseBody,
       draft: false,
       prerelease: false,
