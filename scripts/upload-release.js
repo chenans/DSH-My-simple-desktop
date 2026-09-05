@@ -15,8 +15,8 @@ const path = require('path');
 const https = require('https');
 
 const REPO = 'chenans/DSH-My-simple-desktop';
-const TAG = 'v0.1.45';
-const VERSION = '0.1.45';
+const TAG = 'v0.1.46';
+const VERSION = '0.1.46';
 
 // --- Get token from git credential helper ---
 function getToken() {
@@ -142,13 +142,13 @@ async function main() {
     // 3. Create release
     console.log();
     console.log('[3/4] Creating new release...');
-    const releaseBody = `## v${VERSION} — 退出/安装更新前检查会话任务
+    const releaseBody = `## v${VERSION} — 下载窗口无边框 + 最小化到托盘
 
-### 修复
+### 优化
 
-- **托盘"退出"菜单** — 退出前检查是否有大模型任务正在进行，有则弹窗确认（与窗口关闭按钮一致）
-- **安装更新并重启** — 下载完成后自动安装前、托盘菜单手动安装、进度窗口安装按钮，均增加会话任务检查
-- **重试下载后自动安装** — 同样增加会话任务检查
+- **下载进度窗口改为无边框** — 移除系统导航条，使用自定义标题栏，界面更简洁
+- **新增最小化按钮** — 点击最小化按钮缩到托盘（不占任务栏），点击托盘"下载更新"重新弹出窗口
+- **关闭按钮保留** — 关闭窗口不影响下载，仍可从托盘菜单重新打开
 
 ### 下载
 
@@ -168,7 +168,7 @@ async function main() {
 
     const createResp = await apiCall('POST', 'releases', {
       tag_name: TAG,
-      name: `v${VERSION} — 退出/安装更新前检查会话任务`,
+      name: `v${VERSION} — 下载窗口无边框 + 最小化到托盘`,
       body: releaseBody,
       draft: false,
       prerelease: false,

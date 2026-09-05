@@ -1552,8 +1552,9 @@ function showDownloadProgressWindow() {
     width: 440,
     height: 280,
     resizable: false,
-    minimizable: false,
+    minimizable: true,
     maximizable: false,
+    frame: false,
     title: '下载更新',
     icon: ICON_PATH,
     autoHideMenuBar: true,
@@ -1570,6 +1571,11 @@ function showDownloadProgressWindow() {
   _downloadProgressWin.once('ready-to-show', () => {
     _downloadProgressWin.show();
     sendProgressToWindow();
+  });
+  // Minimize → hide to tray (not taskbar); clicking tray "下载更新" re-shows
+  _downloadProgressWin.on('minimize', (e) => {
+    e.preventDefault();
+    _downloadProgressWin.hide();
   });
   _downloadProgressWin.on('closed', () => { _downloadProgressWin = null; });
   _downloadProgressWin.loadFile(path.join(__dirname, 'updater', 'download-progress.html'));

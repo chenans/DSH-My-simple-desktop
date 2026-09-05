@@ -18,9 +18,27 @@
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; padding: 24px; background: var(--bg); color: var(--fg);
+    margin: 0; padding: 0; background: var(--bg); color: var(--fg);
     font: 14px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif;
     display: flex; flex-direction: column; align-items: center; gap: 16px;
+    -webkit-user-select: none; user-select: none;
+  }
+  .titlebar {
+    width: 100%; height: 36px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 4px 0 16px; -webkit-app-region: drag; border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .titlebar-title { font-size: 13px; font-weight: 600; }
+  .titlebar-btns { display: flex; -webkit-app-region: no-drag; }
+  .titlebar-btn {
+    width: 36px; height: 36px; border: none; background: transparent; color: var(--fg);
+    cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center;
+    border-radius: 0; padding: 0;
+  }
+  .titlebar-btn:hover { background: rgba(128,128,128,0.15); }
+  .titlebar-btn.close:hover { background: #e81123; color: #fff; }
+  .content {
+    width: 100%; padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 16px;
   }
   h2 { font-size: 16px; margin: 0; }
   .version { color: var(--muted); font-size: 12px; }
@@ -44,33 +62,41 @@
   .status.error { color: var(--err); }
   .status.done { color: var(--ok); }
   .actions { display: flex; gap: 12px; }
-  button {
+  button.action {
     font: inherit; padding: 8px 20px; border-radius: 6px; cursor: pointer;
     border: 1px solid var(--border); background: var(--bg); color: var(--fg);
   }
-  button:hover { border-color: var(--accent); }
-  button.primary {
+  button.action:hover { border-color: var(--accent); }
+  button.action.primary {
     background: var(--accent); border-color: var(--accent); color: #fff;
   }
-  button:disabled { opacity: 0.5; cursor: default; }
+  button.action:disabled { opacity: 0.5; cursor: default; }
   .hidden { display: none; }
 </style>
 </head>
 <body>
-  <h2 id="title">正在下载更新</h2>
-  <div class="version" id="version"></div>
-
-  <div class="progress-wrap">
-    <div class="progress-bar"><div class="progress-fill" id="fill"></div></div>
-    <div class="progress-text" id="pctText">0%</div>
+  <div class="titlebar">
+    <span class="titlebar-title">下载更新</span>
+    <div class="titlebar-btns">
+      <button class="titlebar-btn" id="minBtn" title="最小化到托盘">&#x2013;</button>
+      <button class="titlebar-btn close" id="closeBtn" title="关闭">&#x2715;</button>
+    </div>
   </div>
+  <div class="content">
+    <h2 id="title">正在下载更新</h2>
+    <div class="version" id="version"></div>
 
-  <div class="status" id="status">下载中…</div>
+    <div class="progress-wrap">
+      <div class="progress-bar"><div class="progress-fill" id="fill"></div></div>
+      <div class="progress-text" id="pctText">0%</div>
+    </div>
 
-  <div class="actions" id="actions">
-    <button id="installBtn" class="primary hidden">安装更新并重启</button>
-    <button id="retryBtn" class="hidden">重试下载</button>
-    <button id="closeBtn">关闭</button>
+    <div class="status" id="status">下载中…</div>
+
+    <div class="actions" id="actions">
+      <button id="installBtn" class="action primary hidden">安装更新并重启</button>
+      <button id="retryBtn" class="action hidden">重试下载</button>
+    </div>
   </div>
 
 <script>
@@ -83,6 +109,7 @@
   var installBtn = document.getElementById('installBtn');
   var retryBtn = document.getElementById('retryBtn');
   var closeBtn = document.getElementById('closeBtn');
+  var minBtn = document.getElementById('minBtn');
 
   function updateUI(data) {
     var pct = data.percent || 0;
@@ -141,6 +168,10 @@
 
   closeBtn.addEventListener('click', function() {
     window.close();
+  });
+
+  minBtn.addEventListener('click', function() {
+    window.minimize();
   });
 })();
 </script>
