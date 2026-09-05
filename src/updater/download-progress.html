@@ -218,7 +218,9 @@
   });
 
   minBtn.addEventListener('click', function() {
-    window.minimize();
+    if (window.dshDesktop && window.dshDesktop.download) {
+      window.dshDesktop.download.minimize();
+    }
   });
 })();
 </script>

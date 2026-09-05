@@ -78,5 +78,6 @@ contextBridge.exposeInMainWorld('dshDesktop', {
     },
     install: () => ipcRenderer.invoke('download:install'),
     retry: () => ipcRenderer.invoke('download:retry'),
+    minimize: () => ipcRenderer.invoke('download:minimize'),
   },
 });

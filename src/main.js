@@ -1805,6 +1805,11 @@ function registerIpc() {
       promptDownloadUpdate(_downloadState.latestVersion, _downloadState.downloadUrl, _downloadState.assetName);
     }
   });
+  ipcMain.handle('download:minimize', () => {
+    if (_downloadProgressWin && !_downloadProgressWin.isDestroyed()) {
+      _downloadProgressWin.minimize();
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
