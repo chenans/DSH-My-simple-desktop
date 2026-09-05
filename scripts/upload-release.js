@@ -15,8 +15,8 @@ const path = require('path');
 const https = require('https');
 
 const REPO = 'chenans/DSH-My-simple-desktop';
-const TAG = 'v0.1.41';
-const VERSION = '0.1.41';
+const TAG = 'v0.1.42';
+const VERSION = '0.1.42';
 
 // --- Get token from git credential helper ---
 function getToken() {
@@ -142,23 +142,24 @@ async function main() {
     // 3. Create release
     console.log();
     console.log('[3/4] Creating new release...');
-    const releaseBody = `## v${VERSION} — 下载更新收敛托盘 + 用量统计界面修复
+    const releaseBody = `## v${VERSION} — 修复托盘菜单崩溃
 
 ### 修复
 
-- **下载更新弹窗移除** — 不再弹出独立下载进度窗口，所有下载进度、重试、安装操作统一收敛到系统托盘菜单（Tooltip 显示百分比，菜单提供"安装更新并重启"/"重试下载"）
-- **用量统计界面** — 移除导致渲染问题的悬浮 Tooltip 代码，恢复简洁版 SVG 图表（柱状图 + 折线图），保留原生 \`<title>\` 悬停提示
-- **托盘菜单** — 确认 \`createTray()\` 正确调用 \`tray.setContextMenu()\`，左键切换主窗口显示/隐藏，右键弹出菜单
+- **托盘菜单不显示** — \`_downloadState\` 变量被使用但从未声明，导致 \`buildTrayMenu()\` 抛出 \`ReferenceError\`，托盘菜单无法创建。已补充声明 \`let _downloadState = null\`
+- **下载更新弹窗移除** — 不再弹出独立下载进度窗口，所有下载进度、重试、安装操作统一收敛到系统托盘菜单
+- **用量统计界面** — 恢复简洁版 SVG 图表，移除导致渲染问题的悬浮 Tooltip 代码
 
 ### 下载
 
 | 版本 | 文件 | 大小 | 适用人群 |
 |------|------|------|---------|
 | 完整版 | \`DSH.My.Simple.Desktop-${VERSION}-Setup.exe\` | ~152 MB | 没装 dsh / 离线环境，开箱即用 |
+| 精简版 | \`DSH.My.Simple.Desktop-${VERSION}-Lite-Setup.exe\` | ~81 MB | 本地已装 dsh 的用户 |
 
 ### 安装说明
 
-1. 下载 \`DSH.My.Simple.Desktop-${VERSION}-Setup.exe\`
+1. 下载对应版本的 Setup.exe
 2. 双击运行安装（如提示 SmartScreen，点击"仍要运行"）
 3. 安装完成后从开始菜单启动"DSH My Simple Desktop"
 4. 按 \`Alt\` 键显示菜单栏，访问"帮助"菜单使用检查更新、用量统计、模型配置教程等功能
@@ -167,7 +168,7 @@ async function main() {
 
     const createResp = await apiCall('POST', 'releases', {
       tag_name: TAG,
-      name: `v${VERSION} — 下载更新收敛托盘 + 用量统计界面修复`,
+      name: `v${VERSION} — 修复托盘菜单崩溃`,
       body: releaseBody,
       draft: false,
       prerelease: false,

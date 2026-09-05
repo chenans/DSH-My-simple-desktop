@@ -99,6 +99,7 @@ let splashWindow = null;
 let tray = null;
 let dshChild = null;
 let isQuitting = false;
+let _downloadState = null;
 // 跨实例计数（通过 CLI 参数 --relaunch-count=N 传递，env 在 Windows 上不可靠）
 let appRelaunches = (() => {
   const i = process.argv.indexOf('--relaunch-count');
