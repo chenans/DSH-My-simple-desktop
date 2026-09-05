@@ -1274,8 +1274,20 @@ function buildTrayMenu() {
 function createTray() {
   tray = new Tray(TRAY_ICON_PATH);
   tray.setToolTip(APP_NAME);
-  tray.setContextMenu(buildTrayMenu());
-  tray.on('click', () => tray.popUpContextMenu(buildTrayMenu()));
+  const menu = buildTrayMenu();
+  tray.setContextMenu(menu);
+  log.info('tray created with context menu');
+  tray.on('click', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isVisible()) {
+        mainWindow.hide();
+      } else {
+        showMainWindow();
+      }
+    } else {
+      tray.popUpContextMenu(buildTrayMenu());
+    }
+  });
   tray.on('double-click', () => showMainWindow());
 }
 
