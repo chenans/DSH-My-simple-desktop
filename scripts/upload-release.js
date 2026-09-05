@@ -15,8 +15,8 @@ const path = require('path');
 const https = require('https');
 
 const REPO = 'chenans/DSH-My-simple-desktop';
-const TAG = 'v0.1.42';
-const VERSION = '0.1.42';
+const TAG = 'v0.1.43';
+const VERSION = '0.1.43';
 
 // --- Get token from git credential helper ---
 function getToken() {
@@ -142,13 +142,11 @@ async function main() {
     // 3. Create release
     console.log();
     console.log('[3/4] Creating new release...');
-    const releaseBody = `## v${VERSION} — 修复托盘菜单崩溃
+    const releaseBody = `## v${VERSION} — 用量统计图表悬浮提示
 
-### 修复
+### 新增
 
-- **托盘菜单不显示** — \`_downloadState\` 变量被使用但从未声明，导致 \`buildTrayMenu()\` 抛出 \`ReferenceError\`，托盘菜单无法创建。已补充声明 \`let _downloadState = null\`
-- **下载更新弹窗移除** — 不再弹出独立下载进度窗口，所有下载进度、重试、安装操作统一收敛到系统托盘菜单
-- **用量统计界面** — 恢复简洁版 SVG 图表，移除导致渲染问题的悬浮 Tooltip 代码
+- **按时间分布图表悬浮提示** — 鼠标悬浮柱状图区域时显示自定义 Tooltip，包含：时段、总 Token、调用次数、会话/轮次/步数、折线数据（会话数或调用次数）
 
 ### 下载
 
@@ -168,7 +166,7 @@ async function main() {
 
     const createResp = await apiCall('POST', 'releases', {
       tag_name: TAG,
-      name: `v${VERSION} — 修复托盘菜单崩溃`,
+      name: `v${VERSION} — 用量统计图表悬浮提示`,
       body: releaseBody,
       draft: false,
       prerelease: false,

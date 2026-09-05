@@ -239,7 +239,7 @@ function renderPeriodChart(periods, granularity) {
   const barW = Math.max(2, slot * 0.58);
   const ticks = 4;
 
-  let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img" aria-label="按时间分布图表">`;
+  let svg = `<svg id="periodChart" viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img" aria-label="按时间分布图表">`;
 
   // Grid + left axis (tokens)
   for (let i = 0; i <= ticks; i++) {
@@ -254,8 +254,7 @@ function renderPeriodChart(periods, granularity) {
     const h = maxTokens > 1 ? (p.totalTokens / maxTokens) * plotH : 0;
     const x = L + i * slot + (slot - barW) / 2;
     const y = T + plotH - h;
-    svg += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="var(--bar1)" rx="2">`;
-    svg += `<title>${esc(p.period)}: 总 ${fmt(p.totalTokens)} token · ${p.sessions} 会话 · ${p.turns} 轮 · ${p.steps} 步 · ${p.calls} 次调用</title></rect>`;
+    svg += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="var(--bar1)" rx="2" pointer-events="none"/>`;
   });
 
   // Line (calls or sessions)
@@ -265,11 +264,11 @@ function renderPeriodChart(periods, granularity) {
       const y = T + plotH - (p[lineKey] / maxLine) * plotH;
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     }).join(' ');
-    svg += `<polyline points="${pts}" fill="none" stroke="var(--bar2)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    svg += `<polyline points="${pts}" fill="none" stroke="var(--bar2)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" pointer-events="none"/>`;
     periods.forEach((p, i) => {
       const x = L + i * slot + slot / 2;
       const y = T + plotH - (p[lineKey] / maxLine) * plotH;
-      svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="var(--bar2)"><title>${esc(p.period)}: ${p[lineKey]} ${lineKey === 'sessions' ? '会话' : '调用'}</title></circle>`;
+      svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="var(--bar2)" pointer-events="none"/>`;
     });
   }
 
@@ -279,19 +278,68 @@ function renderPeriodChart(periods, granularity) {
     if (i % labelStep !== 0 && i !== n - 1) return;
     const x = L + i * slot + slot / 2;
     const label = shortPeriod(p.period, granularity);
-    svg += `<text x="${x.toFixed(1)}" y="${H - B + 16}" text-anchor="middle" font-size="11" fill="var(--muted)">${esc(label)}</text>`;
+    svg += `<text x="${x.toFixed(1)}" y="${H - B + 16}" text-anchor="middle" font-size="11" fill="var(--muted)" pointer-events="none">${esc(label)}</text>`;
   });
 
   // Legend
-  svg += `<rect x="${W - R - 150}" y="4" width="12" height="12" fill="var(--bar1)" rx="2"/><text x="${W - R - 134}" y="14" font-size="11" fill="var(--muted)">总 Token</text>`;
+  svg += `<rect x="${W - R - 150}" y="4" width="12" height="12" fill="var(--bar1)" rx="2" pointer-events="none"/><text x="${W - R - 134}" y="14" font-size="11" fill="var(--muted)" pointer-events="none">总 Token</text>`;
   if (lineKey) {
-    svg += `<line x1="${W - R - 84}" y1="10" x2="${W - R - 70}" y2="10" stroke="var(--bar2)" stroke-width="2"/>`;
-    svg += `<circle cx="${W - R - 77}" cy="10" r="3" fill="var(--bar2)"/>`;
-    svg += `<text x="${W - R - 64}" y="14" font-size="11" fill="var(--muted)">${lineKey === 'sessions' ? '会话数' : '调用次数'}</text>`;
+    svg += `<line x1="${W - R - 84}" y1="10" x2="${W - R - 70}" y2="10" stroke="var(--bar2)" stroke-width="2" pointer-events="none"/>`;
+    svg += `<circle cx="${W - R - 77}" cy="10" r="3" fill="var(--bar2)" pointer-events="none"/>`;
+    svg += `<text x="${W - R - 64}" y="14" font-size="11" fill="var(--muted)" pointer-events="none">${lineKey === 'sessions' ? '会话数' : '调用次数'}</text>`;
   }
+
+  // Invisible hover zones (full height, on top of bars/line)
+  periods.forEach((p, i) => {
+    const x = L + i * slot;
+    const tipData = JSON.stringify({
+      period: p.period,
+      totalTokens: fmt(p.totalTokens),
+      sessions: p.sessions,
+      turns: p.turns,
+      steps: p.steps,
+      calls: p.calls,
+      lineLabel: lineKey === 'sessions' ? '会话数' : '调用次数',
+      lineValue: lineKey ? p[lineKey] : null,
+    });
+    svg += `<rect x="${x.toFixed(1)}" y="${T}" width="${slot.toFixed(1)}" height="${plotH}" fill="transparent" class="chart-hover-zone" data-tip="${esc(tipData)}"/>`;
+  });
 
   svg += '</svg>';
   return svg;
+}
+
+function bindChartTooltip() {
+  const chart = document.getElementById('periodChart');
+  if (!chart) return;
+  let tip = document.querySelector('.chart-tooltip');
+  if (!tip) {
+    tip = document.createElement('div');
+    tip.className = 'chart-tooltip';
+    document.body.appendChild(tip);
+  }
+  const zones = chart.querySelectorAll('.chart-hover-zone');
+  zones.forEach((z) => {
+    z.addEventListener('mouseenter', () => {
+      const d = JSON.parse(z.getAttribute('data-tip'));
+      let html = '<div>' + esc(d.period) + '</div>';
+      html += '总 Token: ' + esc(d.totalTokens) + '<br>';
+      html += '调用: ' + d.calls + ' 次<br>';
+      html += '会话: ' + d.sessions + ' · 轮次: ' + d.turns + ' · 步数: ' + d.steps;
+      if (d.lineValue !== null) {
+        html += '<br>' + esc(d.lineLabel) + ': ' + d.lineValue;
+      }
+      tip.innerHTML = html;
+      tip.style.display = 'block';
+    });
+    z.addEventListener('mousemove', (e) => {
+      tip.style.left = (e.clientX + 14) + 'px';
+      tip.style.top = (e.clientY - 10) + 'px';
+    });
+    z.addEventListener('mouseleave', () => {
+      tip.style.display = 'none';
+    });
+  });
 }
 
 function shortPeriod(p, granularity) {
@@ -453,6 +501,7 @@ async function loadStats() {
     }
 
     content.innerHTML = html;
+    bindChartTooltip();
   } catch (e) {
     content.innerHTML = `<div class="empty">加载失败：${esc(e.message || e)}</div>`;
   }
