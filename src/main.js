@@ -931,46 +931,12 @@ function createMainWindow(url) {
             dialog.showMessageBox(mainWindow, {
               type: 'question',
               title: `发现新版本 v${result.latestVersion}`,
-              message: `发现新版本 v${result.latestVersion}，当前版本 ${updateChecker.CURRENT_VERSION}。\n是否立即下载更新？`,
+              message: `发现新版本 v${result.latestVersion}，当前版本 ${updateChecker.CURRENT_VERSION}。\n是否立即下载更新？\n\n下载进度将在托盘菜单中显示。`,
               buttons: ['下载', '取消'],
               defaultId: 0,
             }).then(async ({ response }) => {
               if (response === 0 && result.downloadUrl) {
-                createDownloadProgressWindow();
-                try {
-                  const { destPath, assetName } = await updateChecker.downloadInstaller(result.downloadUrl, (done, total) => {
-                    sendDownloadProgress(done, total);
-                  });
-                  if (_downloadProgressWin && !_downloadProgressWin.isDestroyed()) {
-                    _downloadProgressWin.webContents.send('update-download-done');
-                  }
-                  await new Promise(r => setTimeout(r, 1000));
-                  closeDownloadProgressWindow();
-                  dialog.showMessageBox(mainWindow, {
-                    type: 'info',
-                    title: '更新已下载',
-                    message: `安装包已下载：${assetName}\n点击"确定"退出并安装。`,
-                    buttons: ['确定', '稍后'],
-                    defaultId: 0,
-                  }).then(async ({ response: resp2 }) => {
-                    if (resp2 === 0) {
-                      const { spawn } = require('child_process');
-                      spawn(destPath, ['--silent'], {
-                        detached: true,
-                        stdio: 'ignore',
-                      }).unref();
-                      isQuitting = true;
-                      app.quit();
-                    }
-                  });
-                } catch (e) {
-                  closeDownloadProgressWindow();
-                  dialog.showMessageBox(mainWindow, {
-                    type: 'error',
-                    title: '下载失败',
-                    message: String(e.message || e),
-                  });
-                }
+                promptDownloadUpdate(result.latestVersion, result.downloadUrl, result.assetName);
               }
             });
           },
@@ -1456,79 +1422,10 @@ function handleCliArgs(argv) {
 
 let _lastNotifiedVersion = null;
 let _autoUpdateTimer = null;
-let _downloadProgressWin = null;
-
-/**
- * Create a small progress window for update downloads.
- */
-function createDownloadProgressWindow() {
-  if (_downloadProgressWin && !_downloadProgressWin.isDestroyed()) {
-    _downloadProgressWin.show();
-    _downloadProgressWin.focus();
-    return _downloadProgressWin;
-  }
-
-  _downloadProgressWin = new BrowserWindow({
-    width: 420,
-    height: 200,
-    resizable: false,
-    minimizable: false,
-    maximizable: false,
-    title: '下载更新',
-    parent: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
-    modal: false,
-    show: true,
-    autoHideMenuBar: true,
-    webPreferences: {
-      nodeIntegration: true,
-      contextIsolation: false,
-    },
-  });
-
-  _downloadProgressWin.loadFile(path.join(__dirname, 'updater', 'download-progress.html'));
-  _downloadProgressWin.on('closed', () => { _downloadProgressWin = null; });
-  return _downloadProgressWin;
-}
-
-/**
- * Send download progress to the progress window.
- */
-function sendDownloadProgress(done, total) {
-  if (done === -1) {
-    // Retry signal: done=-1, total=attempt number
-    if (_downloadProgressWin && !_downloadProgressWin.isDestroyed()) {
-      _downloadProgressWin.webContents.send('update-download-progress', {
-        done: -1,
-        total: total,
-        percent: 0,
-      });
-    }
-    return;
-  }
-
-  const progress = total > 0 ? Math.round((done / total) * 100) : 0;
-  if (_downloadProgressWin && !_downloadProgressWin.isDestroyed()) {
-    _downloadProgressWin.webContents.send('update-download-progress', {
-      percent: progress,
-      done,
-      total,
-    });
-  }
-}
-
-/**
- * Close the download progress window.
- */
-function closeDownloadProgressWindow() {
-  if (_downloadProgressWin && !_downloadProgressWin.isDestroyed()) {
-    _downloadProgressWin.close();
-    _downloadProgressWin = null;
-  }
-}
 
 /**
  * Show a native notification in the bottom-right corner.
- * On click, triggers the download flow.
+ * On click, triggers the download flow (converged to tray menu).
  */
 function showUpdateNotification(latestVersion, downloadUrl, assetName) {
   if (!Notification.isSupported()) {

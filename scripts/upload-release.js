@@ -15,8 +15,8 @@ const path = require('path');
 const https = require('https');
 
 const REPO = 'chenans/DSH-My-simple-desktop';
-const TAG = 'v0.1.40';
-const VERSION = '0.1.40';
+const TAG = 'v0.1.41';
+const VERSION = '0.1.41';
 
 // --- Get token from git credential helper ---
 function getToken() {
@@ -142,33 +142,32 @@ async function main() {
     // 3. Create release
     console.log();
     console.log('[3/4] Creating new release...');
-    const releaseBody = `## v${VERSION} — 用量统计图表与缓存写入修复
+    const releaseBody = `## v${VERSION} — 下载更新收敛托盘 + 用量统计界面修复
 
 ### 修复
 
-- **按时间分布图折线与柱状不一致** — 折线此前选用"会话数"（每时段仅 0~2 个），与柱状图的 Token 消耗趋势相反，看起来两套数据对不上。改为优先叠加"调用次数"（与 Token 消耗直接正相关），仅当无调用数据时回退为会话数
-- **"缓存写入"一直显示 0** — 数据源（usage-ledger 与会话记录）本身未记录缓存写入量（API 计费仅区分 cache hit/miss）。不再用误导性的 0 展示：总计卡片与模型/Provider 明细表显示"未记录"并附悬停说明
+- **下载更新弹窗移除** — 不再弹出独立下载进度窗口，所有下载进度、重试、安装操作统一收敛到系统托盘菜单（Tooltip 显示百分比，菜单提供"安装更新并重启"/"重试下载"）
+- **用量统计界面** — 移除导致渲染问题的悬浮 Tooltip 代码，恢复简洁版 SVG 图表（柱状图 + 折线图），保留原生 \`<title>\` 悬停提示
+- **托盘菜单** — 确认 \`createTray()\` 正确调用 \`tray.setContextMenu()\`，左键切换主窗口显示/隐藏，右键弹出菜单
 
 ### 下载
 
 | 版本 | 文件 | 大小 | 适用人群 |
 |------|------|------|---------|
 | 完整版 | \`DSH.My.Simple.Desktop-${VERSION}-Setup.exe\` | ~152 MB | 没装 dsh / 离线环境，开箱即用 |
-| 精简版 | \`DSH.My.Simple.Desktop-${VERSION}-Lite-Setup.exe\` | ~81 MB | 本地已装 dsh 的用户 |
-| 插件版 | \`DSH.My.Simple.Desktop-${VERSION}-Plugins-Setup.exe\` | ~278 MB | 内网/离线团队分发，内置插件快照 |
 
 ### 安装说明
 
-1. 下载对应版本的 Setup.exe
+1. 下载 \`DSH.My.Simple.Desktop-${VERSION}-Setup.exe\`
 2. 双击运行安装（如提示 SmartScreen，点击"仍要运行"）
 3. 安装完成后从开始菜单启动"DSH My Simple Desktop"
 4. 按 \`Alt\` 键显示菜单栏，访问"帮助"菜单使用检查更新、用量统计、模型配置教程等功能
 
-> 完整版和插件版首次启动会自动部署 dsh 运行时到 \`%USERPROFILE%\\.dsh-desktop\`，请耐心等待进度条完成。`;
+> 完整版首次启动会自动部署 dsh 运行时到 \`%USERPROFILE%\\.dsh-desktop\`，请耐心等待进度条完成。`;
 
     const createResp = await apiCall('POST', 'releases', {
       tag_name: TAG,
-      name: `v${VERSION} — 用量统计图表与缓存写入修复`,
+      name: `v${VERSION} — 下载更新收敛托盘 + 用量统计界面修复`,
       body: releaseBody,
       draft: false,
       prerelease: false,
