@@ -15,8 +15,8 @@ const path = require('path');
 const https = require('https');
 
 const REPO = 'chenans/DSH-My-simple-desktop';
-const TAG = 'v0.1.46';
-const VERSION = '0.1.46';
+const TAG = 'v0.1.47';
+const VERSION = '0.1.47';
 
 // --- Get token from git credential helper ---
 function getToken() {
@@ -142,13 +142,14 @@ async function main() {
     // 3. Create release
     console.log();
     console.log('[3/4] Creating new release...');
-    const releaseBody = `## v${VERSION} — 下载窗口无边框 + 最小化到托盘
+    const releaseBody = `## v${VERSION} — 下载窗口显示版本/大小/速度 + 修复滚动条
 
 ### 优化
 
-- **下载进度窗口改为无边框** — 移除系统导航条，使用自定义标题栏，界面更简洁
-- **新增最小化按钮** — 点击最小化按钮缩到托盘（不占任务栏），点击托盘"下载更新"重新弹出窗口
-- **关闭按钮保留** — 关闭窗口不影响下载，仍可从托盘菜单重新打开
+- **下载进度窗口显示完整信息** — 新增版本号、已下载/总大小、下载速度（每秒刷新）
+- **修复窗口右侧滚动条** — 设置 \`overflow: hidden\`，增大窗口尺寸（460×340），内容完整显示无滚动条
+- **无边框窗口** — \`frame: false\` 自定义标题栏，可拖拽，含最小化/关闭按钮
+- **最小化到托盘** — 点击最小化按钮缩到托盘，点击托盘"下载更新"重新弹出
 
 ### 下载
 
@@ -168,7 +169,7 @@ async function main() {
 
     const createResp = await apiCall('POST', 'releases', {
       tag_name: TAG,
-      name: `v${VERSION} — 下载窗口无边框 + 最小化到托盘`,
+      name: `v${VERSION} — 下载窗口显示版本/大小/速度 + 修复滚动条`,
       body: releaseBody,
       draft: false,
       prerelease: false,

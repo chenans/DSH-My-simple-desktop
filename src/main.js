@@ -1227,11 +1227,38 @@ function buildTrayMenu() {
           _downloadState.state = 'downloading';
           _downloadState.retryAttempt = 0;
           _downloadState.percent = 0;
+          _downloadState.downloaded = 0;
+          _downloadState.total = 0;
+          _downloadState.speed = 0;
+          _downloadState.speedTs = 0;
+          _downloadState.speedDone = 0;
           updateTrayMenu();
           try {
             const { destPath } = await updateChecker.downloadInstaller(_downloadState.downloadUrl, (done, total, retryAttempt) => {
+              if (done === -1) {
+                _downloadState.retryAttempt = retryAttempt || 0;
+                _downloadState.speed = 0;
+                _downloadState.speedTs = 0;
+                _downloadState.speedDone = 0;
+                updateTrayMenu();
+                return;
+              }
+              _downloadState.downloaded = done;
+              _downloadState.total = total;
               _downloadState.percent = total > 0 ? Math.round((done / total) * 100) : 0;
-              _downloadState.retryAttempt = retryAttempt || 0;
+              _downloadState.retryAttempt = 0;
+              const now = Date.now();
+              if (_downloadState.speedTs === 0) {
+                _downloadState.speedTs = now;
+                _downloadState.speedDone = done;
+              } else {
+                const elapsed = (now - _downloadState.speedTs) / 1000;
+                if (elapsed >= 1) {
+                  _downloadState.speed = Math.round((done - _downloadState.speedDone) / elapsed);
+                  _downloadState.speedTs = now;
+                  _downloadState.speedDone = done;
+                }
+              }
               updateTrayMenu();
             });
             _downloadState.destPath = destPath;
@@ -1549,11 +1576,12 @@ function showDownloadProgressWindow() {
   }
 
   _downloadProgressWin = new BrowserWindow({
-    width: 440,
-    height: 280,
+    width: 460,
+    height: 340,
     resizable: false,
     minimizable: true,
     maximizable: false,
+    fullscreenable: false,
     frame: false,
     title: '下载更新',
     icon: ICON_PATH,
@@ -1592,6 +1620,10 @@ function sendProgressToWindow() {
     retryAttempt: _downloadState ? _downloadState.retryAttempt : 0,
     latestVersion: _downloadState ? _downloadState.latestVersion : null,
     errorMsg: _downloadState ? _downloadState.errorMsg : null,
+    downloaded: _downloadState ? _downloadState.downloaded : 0,
+    total: _downloadState ? _downloadState.total : 0,
+    speed: _downloadState ? _downloadState.speed : 0,
+    assetName: _downloadState ? _downloadState.assetName : null,
   });
 }
 
@@ -1614,14 +1646,44 @@ async function promptDownloadUpdate(latestVersion, downloadUrl, assetName) {
     percent: 0,
     state: 'downloading',
     retryAttempt: 0,
+    downloaded: 0,
+    total: 0,
+    speed: 0,
+    speedTs: 0,
+    speedDone: 0,
   };
   updateTrayMenu();
   showDownloadProgressWindow();
 
   try {
     const { destPath } = await updateChecker.downloadInstaller(downloadUrl, (done, total, retryAttempt) => {
+      // Special retry signal: done=-1, retryAttempt=attempt
+      if (done === -1) {
+        _downloadState.retryAttempt = retryAttempt || 0;
+        _downloadState.speed = 0;
+        _downloadState.speedTs = 0;
+        _downloadState.speedDone = 0;
+        updateTrayMenu();
+        return;
+      }
+      _downloadState.downloaded = done;
+      _downloadState.total = total;
       _downloadState.percent = total > 0 ? Math.round((done / total) * 100) : 0;
-      _downloadState.retryAttempt = retryAttempt || 0;
+      _downloadState.retryAttempt = 0;
+
+      // Calculate speed (bytes/sec) over a 1s window
+      const now = Date.now();
+      if (_downloadState.speedTs === 0) {
+        _downloadState.speedTs = now;
+        _downloadState.speedDone = done;
+      } else {
+        const elapsed = (now - _downloadState.speedTs) / 1000;
+        if (elapsed >= 1) {
+          _downloadState.speed = Math.round((done - _downloadState.speedDone) / elapsed);
+          _downloadState.speedTs = now;
+          _downloadState.speedDone = done;
+        }
+      }
       updateTrayMenu();
     });
 
