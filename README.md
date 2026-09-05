@@ -4,11 +4,11 @@
 [![Downloads](https://img.shields.io/github/downloads/chenans/DSH-My-simple-desktop/total)](https://github.com/chenans/DSH-My-simple-desktop/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-一个简单的 Windows 桌面壳：用 Electron 把 DeepSeek Harness 的 `dsh web` 界面封装成桌面应用，**内置 dsh 运行时 + 自动检查更新 + 下载进度窗口 + 自动重试 + 用量统计（按模型/Provider） + 模型配置教程**。
+一个简单的 Windows 桌面壳：用 Electron 把 DeepSeek Harness 的 `dsh web` 界面封装成桌面应用，**内置 dsh 运行时 + 自动检查更新 + 下载进度窗口（可反复查看）+ 自动重试 + 下载取消/重试 + 用量统计（按模型/Provider） + 模型配置教程 + 退出/安装前会话任务检查**。
 
 > 适合团队内部使用，让没有 Node.js 环境或网络不好的同事也能直接双击运行 dsh。
 
-**English:** A minimal Electron wrapper for DeepSeek Harness (`dsh web`). Bundles a portable Node.js + dsh runtime so non-technical users can install and run dsh with zero dependencies. Features: auto-update via GitHub Release with download progress window and auto-retry, usage statistics (tokens by model/provider/sessions/projects), crash recovery, system tray, close-guard (prevents accidental quit during LLM generation), model config guide. Windows x64 only.
+**English:** A minimal Electron wrapper for DeepSeek Harness (`dsh web`). Bundles a portable Node.js + dsh runtime so non-technical users can install and run dsh with zero dependencies. Features: auto-update via GitHub Release with reusable download progress window, auto-retry, download cancel/retry, usage statistics (tokens by model/provider/sessions/projects), crash recovery, system tray with usage/guide entries and download submenu, close-guard (prevents accidental quit during LLM generation, also applies to tray quit and update install), model config guide. Windows x64 only.
 
 ## 📥 直接下载
 
@@ -16,13 +16,11 @@
 
 | 版本 | 下载 | 大小 | 适用人群 |
 |------|------|------|---------|
-| **完整版** | [DSH.My.Simple.Desktop-0.1.29-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.29/DSH.My.Simple.Desktop-0.1.29-Setup.exe) | 151.8 MB | 没装 dsh / 离线环境，**无需任何预装**，开箱即用 |
-| **精简版** | [DSH.My.Simple.Desktop-0.1.29-Lite-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.29/DSH.My.Simple.Desktop-0.1.29-Lite-Setup.exe) | 81.5 MB | 本地已装 dsh 的用户，安装快 |
-| **插件版** | [DSH.My.Simple.Desktop-0.1.29-Plugins-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.29/DSH.My.Simple.Desktop-0.1.29-Plugins-Setup.exe) | 278.4 MB | 内网/离线团队分发，内置作者预设的 dsh 插件与 agent-presets 快照，同事装完即用无需自行配置插件 |
+| **完整版** | [DSH.My.Simple.Desktop-0.1.45-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.45/DSH.My.Simple.Desktop-0.1.45-Setup.exe) | 151.8 MB | 没装 dsh / 离线环境，**无需任何预装**，开箱即用 |
+| **精简版** | [DSH.My.Simple.Desktop-0.1.45-Lite-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.45/DSH.My.Simple.Desktop-0.1.45-Lite-Setup.exe) | 81.5 MB | 本地已装 dsh 的用户，安装快 |
 
 - **完整版**：内置完整 dsh 运行时（node.exe + 全部依赖），首次启动自动安装环境到 `%USERPROFILE%\.dsh-desktop` 并加入命令行 PATH；每次启动自动检查 dsh 更新
 - **精简版**：使用系统已安装的 dsh；若系统没有 dsh 会提示安装 dsh 或改用完整版
-- **插件版**：在完整版基础上额外内置作者本地的 dsh 插件增量包与 agent-presets 快照；**不内置模型配置/密钥**；首次启动将插件层幂等部署到 `~/.dsh`（不覆盖用户已有数据）；默认离线运行（跳过 dsh 内核更新检查），强制使用内置 dsh 运行时
 
 ## 功能
 
@@ -34,19 +32,26 @@
   - 菜单栏"帮助 → 检查更新"手动检查
   - 启动后 30 秒自动检查 GitHub Release
   - 每 4 小时定时轮询，发现新版本右下角弹窗通知
-- **下载进度窗口** — 下载更新时显示进度条、已下载/总大小、下载速度；下载失败自动重试（最多 3 次，间隔 5 秒）
-- **用量统计** — 菜单栏"帮助 → 用量统计"：
+- **下载进度窗口** — 下载更新时显示进度条、已下载/总大小、下载速度；下载失败自动重试（最多 3 次，间隔 5 秒）；窗口可反复打开（关闭不影响下载），支持取消下载和重新下载
+- **用量统计** — 菜单栏"帮助 → 用量统计"或托盘菜单"用量统计"：
   - 读取 `~/.dsh/dsh-usage/usage-ledger.json`，统计真实 Token 使用量
   - 按模型统计（如 scnet-base/GLM-5-Base）：输入/输出/缓存读取/缓存写入 Token + 调用次数
   - 按 Provider 统计：各 Provider 的 Token 使用量 + 余额
-  - 按时间分布柱状图（粒度：天/周/月/年/自动）
+  - 按时间分布柱状图（粒度：天/周/月/年/自动），鼠标悬浮显示详细 Tooltip
   - 按项目统计表格（会话数、交互轮次、Token、最后使用时间）
   - 时间范围筛选：全部 / 7天 / 30天 / 90天 / 1年 / **自定义日期范围**（含本月/上月/今年/去年快捷按钮）
 - **崩溃恢复** — dsh 子进程崩溃自动重启（退避重试），渲染进程崩溃自动重载
-- **系统托盘** — 显示/隐藏窗口、打开工作区、设置、退出
+- **系统托盘** — 显示/隐藏窗口、打开工作区、用量统计、模型配置教程、设置、退出；下载更新时显示二级菜单（进度详情/查看下载详情/取消下载/安装更新并重启）
 - **开机自启** — 登录 Windows 后后台静默启动（`--hidden` 参数）
 - **设置窗口** — 工作区目录、关闭行为（隐藏到托盘/直接退出）、开机自启开关
-- **模型配置教程** — 菜单栏"帮助 → 模型配置教程"，内置图文教程，手把手教配置第三方 OpenAI 兼容网关
+- **模型配置教程** — 菜单栏"帮助 → 模型配置教程"或托盘菜单"模型配置教程"，内置图文教程，手把手教配置第三方 OpenAI 兼容网关
+- **会话任务检查（close-guard）** — 以下操作前检查是否有大模型任务正在进行，有则弹窗确认（避免中断会话/数据丢失）：
+  - 窗口关闭按钮（未开启关闭到托盘时）
+  - 托盘"退出"菜单
+  - 下载完成后自动安装更新
+  - 托盘"安装更新并重启"菜单
+  - 进度窗口"安装更新并重启"按钮
+  - 托盘"重试下载"成功后自动安装
 - **单实例锁** — 防止重复启动
 
 ## 菜单栏使用说明
@@ -82,7 +87,6 @@ $env:CSC_LINK = "build/certs/codesign.pfx"
 $env:CSC_KEY_PASSWORD = "<你设置的密码>"
 npm run dist          # 完整版
 npm run dist:lite     # 精简版
-npm run dist:plugins  # 插件版
 
 # 3. 对已构建的 exe 补签名（无需重新打包）
 npm run sign
@@ -144,21 +148,14 @@ npm install -g @deepseek-ai/dsh
 npm.cmd run build:runtime   # 构建内嵌 dsh 运行时（dsh/ 目录，~340MB）
 npm.cmd run dist            # 打包完整版 NSIS 安装包
 npm.cmd run dist:lite       # 打包精简版 NSIS 安装包（不含内置 dsh）
-npm.cmd run dist:plugins    # 打包插件版 NSIS 安装包（含 dsh + 插件层快照）
 ```
-
-> 打包插件版前需先运行 `npm.cmd run build:plugin-layer`，该脚本会交互式选择要快照的
-> presets，对 `~/.dsh/profiles/node_modules` 与内置 `dsh/node_modules` 做差分，
-> 仅打包增量包到 `plugins-layer/`，并执行敏感文件安全扫描（发现 api_key/token/
-> secret/password/credential 等模式则构建失败）。
 
 产物在 `release/` 目录：
 
 | 产物 | 大小 | 说明 |
 |------|------|------|
-| `DSH My Simple Desktop-0.1.x-Setup.exe` | ~162 MB | **完整版**：内嵌 dsh 运行时，无 dsh 环境可直接用（离线环境/同事机器） |
+| `DSH My Simple Desktop-0.1.x-Setup.exe` | ~152 MB | **完整版**：内嵌 dsh 运行时，无 dsh 环境可直接用（离线环境/同事机器） |
 | `DSH My Simple Desktop-0.1.x-Lite-Setup.exe` | ~82 MB | **精简版**：仅应用本体，本地已装 dsh 的用户安装快；启动时优先用系统 dsh，没有则提示装 dsh 或用完整版 |
-| `DSH My Simple Desktop-0.1.x-Plugins-Setup.exe` | 视插件量 | **插件版**：完整版 + 作者本地插件/presets 快照增量，内网团队开箱即用；不含模型配置/密钥 |
 
 > 完整版**不依赖系统 Node.js 或 dsh CLI**——它内嵌了便携版 Node.js + 完整 dsh 依赖树。
 > 两个版本的**运行时选择逻辑相同**：每次启动先检测系统 dsh，有则用本地的；本地没有才用内置（完整版）。
