@@ -876,6 +876,36 @@ async function checkActiveLlmTask() {
   }
 }
 
+/**
+ * Check for active LLM tasks and prompt the user if found.
+ * Returns true if safe to proceed (no task, or user confirmed force quit).
+ * Returns false if the user cancelled.
+ */
+async function confirmActiveTaskBeforeQuit(actionLabel) {
+  log.info(`guard: checking active LLM task before ${actionLabel}...`);
+  let hasActiveTask = false;
+  try {
+    hasActiveTask = await checkActiveLlmTask();
+  } catch (err) {
+    log.warn(`guard: check failed: ${err.message}`);
+    return true;
+  }
+  log.info(`guard: hasActiveTask=${hasActiveTask}`);
+  if (!hasActiveTask) return true;
+
+  const parentWin = (mainWindow && !mainWindow.isDestroyed()) ? mainWindow : null;
+  const choice = await dialog.showMessageBox(parentWin, {
+    type: 'warning',
+    buttons: ['仍然继续', '取消'],
+    defaultId: 1,
+    cancelId: 1,
+    title: '有任务正在进行',
+    message: '检测到大模型任务正在进行中',
+    detail: `现在${actionLabel}可能导致会话中断或数据丢失。建议等待任务完成后再${actionLabel}。\n\n确定要强制${actionLabel}吗？`,
+  });
+  return choice.response === 0;
+}
+
 function createMainWindow(url) {
   // Build application menu
   const { Menu, dialog } = require('electron');
@@ -1175,7 +1205,9 @@ function buildTrayMenu() {
         enabled: false,
       }, {
         label: '安装更新并重启',
-        click: () => {
+        click: async () => {
+          const ok = await confirmActiveTaskBeforeQuit('安装更新');
+          if (!ok) return;
           const { spawn } = require('child_process');
           spawn(_downloadState.destPath, ['--silent'], {
             detached: true,
@@ -1206,6 +1238,8 @@ function buildTrayMenu() {
             _downloadState.state = 'done';
             updateTrayMenu();
             await new Promise(r => setTimeout(r, 2000));
+            const ok = await confirmActiveTaskBeforeQuit('安装更新');
+            if (!ok) return;
             const { spawn } = require('child_process');
             spawn(destPath, ['--silent'], { detached: true, stdio: 'ignore' }).unref();
             isQuitting = true;
@@ -1270,9 +1304,12 @@ function buildTrayMenu() {
     },
   }, { type: 'separator' }, {
     label: '退出',
-    click: () => {
-      isQuitting = true;
-      app.quit();
+    click: async () => {
+      const ok = await confirmActiveTaskBeforeQuit('退出');
+      if (ok) {
+        isQuitting = true;
+        app.quit();
+      }
     },
   });
 
@@ -1587,6 +1624,8 @@ async function promptDownloadUpdate(latestVersion, downloadUrl, assetName) {
     updateTrayMenu();
     await new Promise(r => setTimeout(r, 2000));
 
+    const ok = await confirmActiveTaskBeforeQuit('安装更新');
+    if (!ok) return;
     const { spawn } = require('child_process');
     spawn(destPath, ['--silent'], { detached: true, stdio: 'ignore' }).unref();
     isQuitting = true;
@@ -1679,8 +1718,10 @@ function registerIpc() {
   ipcMain.handle('usage:get-stats', (_e, granularity, range) => {
     return usageStats.getUsageStats(granularity, range);
   });
-  ipcMain.handle('download:install', () => {
+  ipcMain.handle('download:install', async () => {
     if (_downloadState && _downloadState.state === 'done' && _downloadState.destPath) {
+      const ok = await confirmActiveTaskBeforeQuit('安装更新');
+      if (!ok) return;
       const { spawn } = require('child_process');
       spawn(_downloadState.destPath, ['--silent'], { detached: true, stdio: 'ignore' }).unref();
       isQuitting = true;

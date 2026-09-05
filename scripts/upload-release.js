@@ -15,8 +15,8 @@ const path = require('path');
 const https = require('https');
 
 const REPO = 'chenans/DSH-My-simple-desktop';
-const TAG = 'v0.1.44';
-const VERSION = '0.1.44';
+const TAG = 'v0.1.45';
+const VERSION = '0.1.45';
 
 // --- Get token from git credential helper ---
 function getToken() {
@@ -142,14 +142,13 @@ async function main() {
     // 3. Create release
     console.log();
     console.log('[3/4] Creating new release...');
-    const releaseBody = `## v${VERSION} — 托盘菜单增强 + 下载进度窗口
+    const releaseBody = `## v${VERSION} — 退出/安装更新前检查会话任务
 
-### 新增
+### 修复
 
-- **托盘菜单新增"用量统计"和"模型配置教程"入口** — 无需打开主窗口，直接从托盘菜单访问
-- **下载更新二级菜单** — 下载中时托盘菜单显示"下载更新 X%"，点击可打开进度窗口，右键展开子菜单查看详情/取消下载
-- **可反复查看的下载进度窗口** — 下载开始时自动弹出，关闭窗口不影响下载，可从托盘菜单反复打开查看
-- **下载取消功能** — 托盘子菜单中可取消下载，取消后可重新下载
+- **托盘"退出"菜单** — 退出前检查是否有大模型任务正在进行，有则弹窗确认（与窗口关闭按钮一致）
+- **安装更新并重启** — 下载完成后自动安装前、托盘菜单手动安装、进度窗口安装按钮，均增加会话任务检查
+- **重试下载后自动安装** — 同样增加会话任务检查
 
 ### 下载
 
@@ -169,7 +168,7 @@ async function main() {
 
     const createResp = await apiCall('POST', 'releases', {
       tag_name: TAG,
-      name: `v${VERSION} — 托盘菜单增强 + 下载进度窗口`,
+      name: `v${VERSION} — 退出/安装更新前检查会话任务`,
       body: releaseBody,
       draft: false,
       prerelease: false,
