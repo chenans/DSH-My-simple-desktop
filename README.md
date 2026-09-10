@@ -16,8 +16,8 @@
 
 | 版本 | 下载 | 大小 | 适用人群 |
 |------|------|------|---------|
-| **完整版** | [DSH.My.Simple.Desktop-0.1.45-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.45/DSH.My.Simple.Desktop-0.1.45-Setup.exe) | 151.8 MB | 没装 dsh / 离线环境，**无需任何预装**，开箱即用 |
-| **精简版** | [DSH.My.Simple.Desktop-0.1.45-Lite-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.45/DSH.My.Simple.Desktop-0.1.45-Lite-Setup.exe) | 81.5 MB | 本地已装 dsh 的用户，安装快 |
+| **完整版** | [DSH.My.Simple.Desktop-0.1.48-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.48/DSH.My.Simple.Desktop-0.1.48-Setup.exe) | 151.9 MB | 没装 dsh / 离线环境，**无需任何预装**，开箱即用 |
+| **精简版** | [DSH.My.Simple.Desktop-0.1.48-Lite-Setup.exe](https://github.com/chenans/DSH-My-simple-desktop/releases/download/v0.1.48/DSH.My.Simple.Desktop-0.1.48-Lite-Setup.exe) | 81.5 MB | 本地已装 dsh 的用户，安装快 |
 
 - **完整版**：内置完整 dsh 运行时（node.exe + 全部依赖），首次启动自动安装环境到 `%USERPROFILE%\.dsh-desktop` 并加入命令行 PATH；每次启动自动检查 dsh 更新
 - **精简版**：使用系统已安装的 dsh；若系统没有 dsh 会提示安装 dsh 或改用完整版
@@ -32,7 +32,7 @@
   - 菜单栏"帮助 → 检查更新"手动检查
   - 启动后 30 秒自动检查 GitHub Release
   - 每 4 小时定时轮询，发现新版本右下角弹窗通知
-- **下载进度窗口** — 下载更新时显示进度条、已下载/总大小、下载速度；下载失败自动重试（最多 3 次，间隔 5 秒）；窗口可反复打开（关闭不影响下载），支持取消下载和重新下载
+- **下载进度窗口** — 无边框自定义标题栏（可拖拽，最小化到托盘/关闭按钮）；显示进度条、百分比、版本号、已下载/总大小、下载速度（每秒刷新）；下载失败自动重试（最多 3 次，间隔 5 秒）；窗口可反复打开（关闭/最小化不影响下载），支持取消下载和重新下载
 - **用量统计** — 菜单栏"帮助 → 用量统计"或托盘菜单"用量统计"：
   - 读取 `~/.dsh/dsh-usage/usage-ledger.json`，统计真实 Token 使用量
   - 按模型统计（如 scnet-base/GLM-5-Base）：输入/输出/缓存读取/缓存写入 Token + 调用次数
